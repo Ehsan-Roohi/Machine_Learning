@@ -1,0 +1,163 @@
+name: ASTR nonlinear R13 cavity run
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'astr-r13-run-trigger.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  run-cavity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build and post-processing dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gfortran cmake ninja-build git zip time \
+            openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev hdf5-tools \
+            python3 python3-numpy python3-matplotlib python3-h5py
+
+      - name: Clone and build ASTR mom_merge
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf work results
+          mkdir -p work results/logs results/source
+          git clone --depth 1 --branch mom_merge https://github.com/astr-code/astr.git work/astr
+          cd work/astr
+          git rev-parse HEAD | tee ../../results/ASTR_MOM_MERGE_COMMIT.txt
+          cd ../..
+          cmake -S work/astr -B work/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_Fortran_COMPILER=mpifort \
+            -DBUILD_TESTING=OFF \
+            2>&1 | tee results/logs/cmake.log
+          cmake --build work/build --parallel 2 2>&1 | tee results/logs/build.log
+          cmake --install work/build 2>&1 | tee results/logs/install.log
+          test -x work/astr/bin/astr
+          cp -a work/astr results/source/ASTR_mom_merge
+          rm -rf results/source/ASTR_mom_merge/.git
+
+      - name: Prepare native and JFM R13 cases
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p work/cases/native_r26 work/cases/jfm_r13
+          cp -a work/astr/examples/Lid-Driven-Cavity-Rarefied/datin work/cases/native_r26/
+          cp -a work/astr/examples/Lid-Driven-Cavity-Rarefied/datin work/cases/jfm_r13/
+          python3 - <<'PY'
+          from pathlib import Path
+          import math, re, json
+
+          gamma = 5.0/3.0
+          R_ar = 8.31446261815324 / 0.039948
+          T = 300.0
+          U = 100.0
+          a = math.sqrt(gamma * R_ar * T)
+          Mach = U/a
+          Kn = 0.05
+          Re = Mach * math.sqrt(0.5*gamma*math.pi) / Kn
+
+          p = Path('work/cases/jfm_r13/datin/input.ldcav2d')
+          s = p.read_text()
+          s = s.replace('273.0d0, 2.629, 0.1625d0, 1.66667d0',
+                        f'300.0d0, {Re:.12f}d0, {Mach:.12f}d0, {gamma:.12f}d0')
+          s = s.replace('none,h,r26', 'none,h,r13')
+          p.write_text(s)
+
+          c = Path('work/cases/jfm_r13/datin/controller')
+          t = c.read_text()
+          t = re.sub(r'(?m)^\s*100,\s*100,\s*100,\s*50,\s*10,\s*50\s*$',
+                     '     2000,     500,     500,     500,      50,   500', t)
+          c.write_text(t)
+
+          meta = {
+              'gas':'argon', 'T_wall_K':T, 'U_lid_m_s':U,
+              'gamma':gamma, 'R_specific_J_kgK':R_ar,
+              'sound_speed_m_s':a, 'Mach':Mach,
+              'Kn_target':Kn, 'Re_input_from_ASTR_relation':Re,
+              'ASTR_relation':'Kn = Mach/Re * sqrt(gamma*pi/2)',
+              'moment':'r13', 'grid':'64x64', 'maxstep':2000,
+              'dt_nondimensional':1e-4,
+              'note':'top wall is ramped internally to dimensionless speed 1 by step 1000'
+          }
+          Path('work/cases/jfm_r13/case_metadata.json').write_text(json.dumps(meta,indent=2))
+          print(json.dumps(meta,indent=2))
+          PY
+          cp -a work/cases results/prepared_cases
+
+      - name: Run native repository cavity smoke test
+        shell: bash
+        run: |
+          set +e
+          cd work/cases/native_r26
+          /usr/bin/time -v timeout 30m mpirun --oversubscribe -np 2 ../../astr/bin/astr run ./datin/input.ldcav2d \
+            > ../../../results/logs/native_r26_stdout.log 2> ../../../results/logs/native_r26_stderr_time.log
+          rc=$?
+          echo "$rc" > ../../../results/native_r26_exit_code.txt
+          find . -maxdepth 4 -type f -printf '%p %s\n' | sort > ../../../results/native_r26_file_manifest.txt
+          cd ../../..
+          cp -a work/cases/native_r26 results/native_r26_output
+          exit 0
+
+      - name: Run JFM nonlinear R13 cavity pilot
+        shell: bash
+        run: |
+          set +e
+          cd work/cases/jfm_r13
+          /usr/bin/time -v timeout 90m mpirun --oversubscribe -np 2 ../../astr/bin/astr run ./datin/input.ldcav2d \
+            > ../../../results/logs/jfm_r13_stdout.log 2> ../../../results/logs/jfm_r13_stderr_time.log
+          rc=$?
+          echo "$rc" > ../../../results/jfm_r13_exit_code.txt
+          find . -maxdepth 5 -type f -printf '%p %s\n' | sort > ../../../results/jfm_r13_file_manifest.txt
+          cd ../../..
+          cp -a work/cases/jfm_r13 results/jfm_r13_output
+          exit 0
+
+      - name: Summarize and package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, re
+          root=Path('results')
+          summary={}
+          for name in ['native_r26','jfm_r13']:
+              rc=Path(f'results/{name}_exit_code.txt')
+              summary[name]={'exit_code':int(rc.read_text().strip()) if rc.exists() else None}
+              out=Path(f'results/logs/{name}_stdout.log')
+              err=Path(f'results/logs/{name}_stderr_time.log')
+              summary[name]['stdout_bytes']=out.stat().st_size if out.exists() else 0
+              summary[name]['stderr_bytes']=err.stat().st_size if err.exists() else 0
+              if err.exists():
+                  txt=err.read_text(errors='replace')
+                  m=re.search(r'Elapsed \(wall clock\) time.*?:\s*([^\n]+)',txt)
+                  summary[name]['elapsed']=m.group(1).strip() if m else None
+              manifest=Path(f'results/{name}_file_manifest.txt')
+              summary[name]['generated_file_count']=len(manifest.read_text().splitlines()) if manifest.exists() else 0
+          Path('results/RUN_SUMMARY.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+          zip -r -9 ASTR_NONLINEAR_R13_JFM_CAVITY_PILOT.zip results
+          sha256sum ASTR_NONLINEAR_R13_JFM_CAVITY_PILOT.zip > ASTR_NONLINEAR_R13_JFM_CAVITY_PILOT.zip.sha256
+
+      - name: Upload ASTR source and cavity results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_PILOT
+          path: |
+            ASTR_NONLINEAR_R13_JFM_CAVITY_PILOT.zip
+            ASTR_NONLINEAR_R13_JFM_CAVITY_PILOT.zip.sha256
+          compression-level: 0
+          retention-days: 7
