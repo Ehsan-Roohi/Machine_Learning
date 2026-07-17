@@ -2,6 +2,8 @@ name: Build RGD source bundle
 
 on:
   workflow_dispatch:
+  issues:
+    types: [opened]
   push:
     paths:
       - '.github/workflows/build-rgd-source-bundle.yml'
