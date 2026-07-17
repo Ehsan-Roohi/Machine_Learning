@@ -27,7 +27,7 @@ regs:
 polar_coord_syst: true
 bcs:
   3000:
-    chi_tilde: 1.0
+    chi_tilde: 0.7978845608028654
     theta_w: 1.0
     u_t_w: -0.40019264077087846
     u_n_w: 0.0
@@ -37,7 +37,7 @@ bcs:
     p_w: 0.0
     epsilon_w: 0.0
   3100:
-    chi_tilde: 1.0
+    chi_tilde: 0.7978845608028654
     theta_w: 1.0
     u_t_w: 0.0
     u_n_w: 0.0
