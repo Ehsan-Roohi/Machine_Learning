@@ -1,0 +1,125 @@
+name: ASTR nonlinear R13 JFM cavity stable-step run
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'astr-r13-stable-trigger.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  run-r13-stable:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gfortran cmake ninja-build git zip time \
+            openmpi-bin libopenmpi-dev libhdf5-openmpi-dev hdf5-tools
+
+      - name: Build ASTR mom_merge
+        run: |
+          set -euxo pipefail
+          rm -rf work results
+          mkdir -p work results/logs
+          git clone --depth 1 --branch mom_merge https://github.com/astr-code/astr.git work/astr
+          git -C work/astr rev-parse HEAD | tee results/ASTR_MOM_MERGE_COMMIT.txt
+          cmake -S work/astr -B work/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_Fortran_COMPILER=mpifort \
+            -DBUILD_TESTING=OFF 2>&1 | tee results/logs/cmake.log
+          cmake --build work/build --parallel 2 2>&1 | tee results/logs/build.log
+          cmake --install work/build 2>&1 | tee results/logs/install.log
+          test -x work/astr/bin/astr
+
+      - name: Prepare JFM nonlinear R13 case
+        run: |
+          set -euxo pipefail
+          mkdir -p work/case
+          cp -a work/astr/examples/Lid-Driven-Cavity-Rarefied/datin work/case/
+          sed -i 's/273.0d0, 2.629, 0.1625d0, 1.66667d0/300.d0,10.03136d0,0.309988d0,1.666667d0/' work/case/datin/input.ldcav2d
+          sed -i 's/none,h,r26/none,h,r13/' work/case/datin/input.ldcav2d
+          sed -i -E 's/^([[:space:]]*)100,[[:space:]]*100,[[:space:]]*100,[[:space:]]*50,[[:space:]]*10,[[:space:]]*50/     6000,    1000,    1000,    1000,     100,  1000/' work/case/datin/controller
+          sed -i 's/^1.d-4$/2.5d-5/' work/case/datin/controller
+          cat > results/CASE_METADATA.txt <<'EOF'
+          Gas: monatomic argon
+          T_wall = 300 K
+          U_lid = 100 m/s
+          gamma = 5/3
+          Mach input = 0.309988
+          Kn target = 0.05
+          Reynolds input = 10.03136
+          ASTR relation: Kn = Mach/Re * sqrt(gamma*pi/2)
+          Moment model: nonlinear R13
+          Grid: 64 x 64
+          Steps requested: 6000
+          dt: 2.5e-5
+          Physical nondimensional final time requested: 0.15
+          Diffuse walls: alpha = 1
+          Top wall ramp: U_wall=min(10*nstep*dt,1); full speed at step 4000
+          Checkpoints every 1000 steps
+          EOF
+          cp work/case/datin/input.ldcav2d results/input_jfm_r13.ldcav2d
+          cp work/case/datin/controller results/controller_jfm_r13
+
+      - name: Run nonlinear R13 case
+        run: |
+          set +e
+          cd work/case
+          /usr/bin/time -v timeout 150m mpirun --oversubscribe -np 2 ../astr/bin/astr run ./datin/input.ldcav2d \
+            > ../../results/logs/run_stdout.log 2> ../../results/logs/run_stderr_time.log
+          rc=$?
+          cd ../..
+          echo "$rc" > results/RUN_EXIT_CODE.txt
+          cp -a work/case results/case_output
+          find results/case_output -maxdepth 5 -type f -printf '%p %s\n' | sort > results/OUTPUT_MANIFEST.txt
+          exit 0
+
+      - name: Record numerical completion state
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, re, h5py, numpy as np
+          out=Path('results/case_output/outdat/flowfield.h5')
+          info={'process_exit_code':int(Path('results/RUN_EXIT_CODE.txt').read_text().strip())}
+          log=Path('results/logs/run_stdout.log').read_text(errors='replace')
+          info['reported_crash']='COMPUTATION CRASHED' in log
+          info['reported_job_done']='The job is done' in log
+          steps=[int(x) for x in re.findall(r'^\s*(\d+)\s+0\.',log,flags=re.M)]
+          info['last_listed_step']=max(steps) if steps else None
+          if out.exists():
+              with h5py.File(out,'r') as f:
+                  info['checkpoint_step']=int(np.asarray(f['nstep'])[0])
+                  info['checkpoint_time']=float(np.asarray(f['time'])[0])
+                  info['all_datasets_finite']=all(np.isfinite(np.asarray(d)).all() for d in f.values() if hasattr(d,'dtype') and np.issubdtype(d.dtype,np.number))
+                  for key in ['ro','u1','u2','p','t','qx','qy','sigmaxx','sigmaxy','Rxx','Rxy','Ryy','Delta']:
+                      if key in f:
+                          a=np.asarray(f[key])
+                          info[key+'_min']=float(np.nanmin(a)); info[key+'_max']=float(np.nanmax(a))
+          Path('results/NUMERICAL_STATUS.json').write_text(json.dumps(info,indent=2))
+          print(json.dumps(info,indent=2))
+          PY
+
+      - name: Package results
+        run: |
+          set -euxo pipefail
+          zip -r -9 ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP.zip results
+          sha256sum ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP.zip > ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP.zip.sha256
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP
+          path: |
+            ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP.zip
+            ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP.zip.sha256
+          compression-level: 0
+          retention-days: 7
