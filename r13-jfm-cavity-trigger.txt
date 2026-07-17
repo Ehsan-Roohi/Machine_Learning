@@ -1,2 +1,2 @@
 Run nominal R13 comparison for the uploaded JFM cavity case: Ar, 300 K, Kn=0.05, U_lid=100 m/s.
-Retry with explicit Docker entrypoint and mandatory output validation.
+Final physics correction: fully diffuse Maxwell walls, chi=1 mapped to chi_tilde=sqrt(2/pi)=0.7978845608028654.
