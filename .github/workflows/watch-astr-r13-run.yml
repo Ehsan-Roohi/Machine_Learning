@@ -1,0 +1,109 @@
+name: Watch ASTR R13 run
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/watch-astr-r13-run.yml'
+
+permissions:
+  actions: write
+  issues: write
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check run and retry transient failures
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: Ehsan-Roohi/Machine_Learning
+          RUN_ID: '29644648884'
+          ISSUE_NUMBER: '10'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          issue_state=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" --jq '.state')
+          if [[ "$issue_state" != "open" ]]; then
+            echo "Watch issue is closed; nothing to do."
+            exit 0
+          fi
+
+          run_json=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}")
+          status=$(jq -r '.status' <<<"$run_json")
+          conclusion=$(jq -r '.conclusion // "none"' <<<"$run_json")
+          attempt=$(jq -r '.run_attempt // 1' <<<"$run_json")
+          html_url=$(jq -r '.html_url' <<<"$run_json")
+          updated_at=$(jq -r '.updated_at' <<<"$run_json")
+
+          jobs=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/jobs?per_page=100")
+          job_summary=$(jq -r '.jobs[] | "- \(.name): \(.status) / \(.conclusion // "none")"' <<<"$jobs")
+
+          marker="<!-- astr-watchdog run=${RUN_ID} status=${status} conclusion=${conclusion} attempt=${attempt} -->"
+          existing=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments?per_page=100" --paginate --jq '.[].body' | grep -F "$marker" || true)
+
+          post_comment() {
+            local body="$1"
+            gh api --method POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" -f body="$body" >/dev/null
+          }
+
+          if [[ "$status" != "completed" ]]; then
+            if [[ -z "$existing" ]]; then
+              post_comment "${marker}
+
+Watchdog check: the ASTR R13 workflow is still **${status}** (attempt ${attempt}).
+
+${job_summary}
+
+Last GitHub update: ${updated_at}
+Run: ${html_url}"
+            fi
+            exit 0
+          fi
+
+          if [[ "$conclusion" == "success" ]]; then
+            if [[ -z "$existing" ]]; then
+              post_comment "${marker}
+
+✅ ASTR R13 workflow completed successfully.
+
+${job_summary}
+
+Run: ${html_url}"
+            fi
+            gh api --method PATCH "repos/${REPO}/issues/${ISSUE_NUMBER}" -f state='closed' -f state_reason='completed' >/dev/null
+            exit 0
+          fi
+
+          if (( attempt < 3 )); then
+            retry_marker="<!-- astr-watchdog retry run=${RUN_ID} attempt=${attempt} conclusion=${conclusion} -->"
+            already_retried=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments?per_page=100" --paginate --jq '.[].body' | grep -F "$retry_marker" || true)
+            if [[ -z "$already_retried" ]]; then
+              if [[ "$conclusion" == "failure" ]]; then
+                gh api --method POST "repos/${REPO}/actions/runs/${RUN_ID}/rerun-failed-jobs" >/dev/null
+              else
+                gh api --method POST "repos/${REPO}/actions/runs/${RUN_ID}/rerun" >/dev/null
+              fi
+              post_comment "${retry_marker}
+
+⚠️ The run stopped with **${conclusion}**. The watchdog automatically requested a retry.
+
+${job_summary}
+
+Run: ${html_url}"
+            fi
+          else
+            if [[ -z "$existing" ]]; then
+              post_comment "${marker}
+
+❌ The workflow stopped with **${conclusion}** after ${attempt} attempts. Automatic retries are exhausted; code-level diagnosis is required.
+
+${job_summary}
+
+Run: ${html_url}"
+            fi
+          fi
