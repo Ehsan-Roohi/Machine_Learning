@@ -118,6 +118,24 @@ def main() -> None:
         h.create_dataset("y", data=Y)
         h.create_dataset("z", data=Z)
 
+    if args.cells % 2 != 0:
+        raise ValueError("The Stage-1 workflow uses a 2x2 MPI decomposition; cells must be even")
+    local = args.cells // 2
+    parallel_lines = [
+        "    isize     jsize     ksize",
+        "        2         2         1",
+        "     Rank       Irk       Jrk       Krk        IM        JM        KM        I0        J0        K0",
+    ]
+    rank = 0
+    for jrank in range(2):
+        for irank in range(2):
+            parallel_lines.append(
+                f"{rank:9d}{irank:10d}{jrank:10d}{0:10d}{local:10d}{local:10d}{0:10d}"
+                f"{irank * local:10d}{jrank * local:10d}{0:10d}"
+            )
+            rank += 1
+    (datin / "parallel.info").write_text("\n".join(parallel_lines) + "\n", encoding="utf-8")
+
     metadata = {
         "cells": args.cells,
         "lid_speed_ms": speed,
