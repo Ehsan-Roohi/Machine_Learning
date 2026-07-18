@@ -1,0 +1,223 @@
+name: Continue semi-linear ASTR R26 adaptively
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'run-astr-r26-semi-adaptive-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: astr-r26-semi-adaptive-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  semi-linear-adaptive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and analysis libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran cmake make openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev unzip zip \
+            python3-h5py python3-numpy python3-scipy python3-matplotlib python3-pandas
+
+      - name: Download verified ASTR source bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: source_artifact
+
+      - name: Download validated semi-linear R26 20k artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_R26_STAGE1_32X32_LADDER_10K_TO_20K
+          run-id: 29654030619
+          github-token: ${{ github.token }}
+          path: r26_artifact
+
+      - name: Download validated R13 40k reference
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000
+          run-id: 29647840498
+          github-token: ${{ github.token }}
+          path: r13_artifact
+
+      - name: Restore source, R26 20k checkpoint, and R13 reference
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SOURCE_INNER=$(find source_artifact -type f -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          mkdir source_restored
+          unzip -q "$SOURCE_INNER" -d source_restored
+          cp -a source_restored/astr ./astr
+          rm -rf astr/build
+
+          R26_INNER=$(find r26_artifact -type f -name 'ASTR_R26_STAGE1_32X32_LADDER_10K_TO_20K.zip' -print -quit)
+          mkdir r26_restored
+          unzip -q "$R26_INNER" -d r26_restored
+          R26_ROOT=$(find r26_restored -type d -name 'ASTR_R26_STAGE1_32X32_LADDER_10K_TO_20K' -print -quit)
+          cp -a "$R26_ROOT/final_case" ./r26_case
+          test -f r26_case/outdat/flowfield.h5
+
+          R13_INNER=$(find r13_artifact -type f -name 'ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000.zip' -print -quit)
+          mkdir r13_restored
+          unzip -q "$R13_INNER" -d r13_restored
+          R13_ROOT=$(find r13_restored -type d -name 'ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000' -print -quit)
+          cp -a "$R13_ROOT" ./r13_40k
+          cp -a r13_40k/input r13_40k/datin
+
+      - name: Apply exact Stage-1 patch and build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 astr_r26_stage1/patch_r26_stage1.py astr \
+            --report r26_stage1_source_audit.json \
+            --patch-output ASTR_R26_STAGE1.patch
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build -j 2
+          test -x astr/build/bin/astr
+
+      - name: Prepare adaptive continuation from step 20000
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p checkpoints convergence summaries logs comparison
+          python3 - <<'PY'
+          from pathlib import Path
+          import h5py, shutil
+          case=Path('r26_case')
+          input_path=next((case/'datin').glob('input.astr*'))
+          lines=input_path.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# lrestar'):
+                  lines[i+1]='t'; break
+          input_path.write_text('\n'.join(lines)+'\n')
+          with h5py.File(case/'outdat/flowfield.h5','r') as h:
+              assert int(h['nstep'][0]) == 20000
+          d=Path('checkpoints/step_20000'); d.mkdir()
+          shutil.copy2(case/'outdat/flowfield.h5',d/'flowfield.h5')
+          shutil.copy2(case/'outdat/auxiliary.h5',d/'auxiliary.h5')
+          PY
+
+      - name: Run adaptive 2k ladder until two consecutive convergence passes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          CONSECUTIVE=0
+          PREVIOUS=20000
+          FINAL=20000
+          INPUT=$(basename "$(find r26_case/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+
+          for TARGET in $(seq 22000 2000 60000); do
+            python3 - "$TARGET" <<'PY'
+          import sys
+          from pathlib import Path
+          target=int(sys.argv[1]); p=Path('r26_case/datin/controller')
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# maxstep,feqchkpt'):
+                  lines[i+1]=f"{target:9d},    2000,    2000,     500,     200,   200"; break
+          else: raise RuntimeError('controller maxstep entry not found')
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+
+            LABEL=$(printf 'step_%05d' "$TARGET")
+            (
+              cd r26_case
+              /usr/bin/time -v mpirun --oversubscribe -np 4 ../astr/build/bin/astr run "datin/${INPUT}" \
+                > "../logs/${LABEL}.log" 2> "../logs/${LABEL}_time.log"
+            )
+            ! grep -q 'COMPUTATION CRASHED' "logs/${LABEL}.log"
+            python3 astr_r26_stage1/validate_r26_case.py r26_case \
+              --target-step "$TARGET" --output "summaries/${LABEL}.json"
+            PREV_LABEL=$(printf 'step_%05d' "$PREVIOUS")
+            python3 astr_r26_stage2/checkpoint_convergence.py \
+              --previous "checkpoints/${PREV_LABEL}/flowfield.h5" \
+              --current r26_case/outdat/flowfield.h5 \
+              --output "convergence/${PREV_LABEL}_to_${LABEL}.json"
+            mkdir "checkpoints/${LABEL}"
+            cp r26_case/outdat/flowfield.h5 "checkpoints/${LABEL}/"
+            cp r26_case/outdat/auxiliary.h5 "checkpoints/${LABEL}/"
+
+            PASS=$(python3 - "convergence/${PREV_LABEL}_to_${LABEL}.json" <<'PY'
+          import json,sys
+          print('1' if json.load(open(sys.argv[1]))['criteria']['passed'] else '0')
+          PY
+            )
+            if [[ "$PASS" == "1" ]]; then
+              CONSECUTIVE=$((CONSECUTIVE+1))
+            else
+              CONSECUTIVE=0
+            fi
+            PREVIOUS=$TARGET
+            FINAL=$TARGET
+            if [[ $CONSECUTIVE -ge 2 ]]; then
+              echo "Convergence criterion passed for two consecutive 2k intervals."
+              break
+            fi
+          done
+          echo "$FINAL" > FINAL_STEP.txt
+          echo "$CONSECUTIVE" > CONSECUTIVE_PASSES.txt
+
+      - name: Build final convergence and DSMC comparison
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 astr_r26_stage1/compare_r26_r13_dsmc.py \
+            --r26-case r26_case --r13-case r13_40k --output comparison
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          files=sorted(Path('convergence').glob('*.json'))
+          records=[json.loads(p.read_text()) for p in files]
+          final=int(Path('FINAL_STEP.txt').read_text())
+          consecutive=int(Path('CONSECUTIVE_PASSES.txt').read_text())
+          summary={
+              'model':'Audited Maxwell/semi-linear R26 Stage 1',
+              'initial_step':20000,
+              'final_step':final,
+              'consecutive_convergence_passes':consecutive,
+              'stopping_rule':'two consecutive intervals with macro<=1%, velocity<=2%, higher moments<=5%',
+              'intervals':records,
+          }
+          Path('convergence/adaptive_summary.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+
+      - name: Package semi-linear adaptive result
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=ASTR_R26_SEMILINEAR_ADAPTIVE_20K_TO_CONVERGENCE
+          mkdir -p "$ROOT"
+          cp -a checkpoints convergence summaries logs comparison "$ROOT/" || true
+          cp -a r26_case "$ROOT/final_case" || true
+          cp -a astr/src "$ROOT/patched_source_src" || true
+          cp ASTR_R26_STAGE1.patch r26_stage1_source_audit.json FINAL_STEP.txt CONSECUTIVE_PASSES.txt "$ROOT/" || true
+          cp -a astr_r26_stage1 astr_r26_stage2 "$ROOT/code"
+          zip -r -9 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload semi-linear adaptive artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_R26_SEMILINEAR_ADAPTIVE_20K_TO_CONVERGENCE
+          path: |
+            ASTR_R26_SEMILINEAR_ADAPTIVE_20K_TO_CONVERGENCE.zip
+            ASTR_R26_SEMILINEAR_ADAPTIVE_20K_TO_CONVERGENCE.zip.sha256
+          compression-level: 0
+          retention-days: 7
