@@ -1,0 +1,178 @@
+name: Continue nonlinear-source ASTR R26 to 50k
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'run-astr-r26-nonlinear-to-50k-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: astr-r26-nonlinear-to-50k-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nonlinear-source-to-50k:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and analysis libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran cmake make openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev unzip zip \
+            python3-h5py python3-numpy python3-scipy python3-matplotlib python3-pandas
+
+      - name: Download verified ASTR source bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: source_artifact
+
+      - name: Download validated nonlinear-source R26 10k artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_R26_NONLINEAR_SOURCE_V1_32X32_TO_10K
+          run-id: 29657208309
+          github-token: ${{ github.token }}
+          path: r26_artifact
+
+      - name: Download validated R13 40k reference
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000
+          run-id: 29647840498
+          github-token: ${{ github.token }}
+          path: r13_artifact
+
+      - name: Restore source, nonlinear R26 seed, and R13 reference
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SOURCE_INNER=$(find source_artifact -type f -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          test -n "$SOURCE_INNER"
+          mkdir source_restored
+          unzip -q "$SOURCE_INNER" -d source_restored
+          cp -a source_restored/astr ./astr
+          rm -rf astr/build
+
+          R26_INNER=$(find r26_artifact -type f -name 'ASTR_R26_NONLINEAR_SOURCE_V1_32X32_TO_10K.zip' -print -quit)
+          test -n "$R26_INNER"
+          mkdir r26_restored
+          unzip -q "$R26_INNER" -d r26_restored
+          R26_ROOT=$(find r26_restored -type d -name 'ASTR_R26_NONLINEAR_SOURCE_V1_32X32_TO_10K' -print -quit)
+          test -n "$R26_ROOT"
+          cp -a "$R26_ROOT/final_case" ./r26_case
+
+          R13_INNER=$(find r13_artifact -type f -name 'ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000.zip' -print -quit)
+          test -n "$R13_INNER"
+          mkdir r13_restored
+          unzip -q "$R13_INNER" -d r13_restored
+          R13_ROOT=$(find r13_restored -type d -name 'ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000' -print -quit)
+          test -n "$R13_ROOT"
+          cp -a "$R13_ROOT" ./r13_40k
+          cp -a r13_40k/input r13_40k/datin
+
+      - name: Apply nonlinear-source v1 patch and build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 astr_r26_stage1/patch_r26_stage1.py astr \
+            --report r26_stage1_source_audit.json \
+            --patch-output ASTR_R26_STAGE1.patch
+          python3 astr_r26_stage2/patch_r26_nonlinear_sources.py astr \
+            --report r26_nonlinear_source_v1_audit.json \
+            --patch-output ASTR_R26_NONLINEAR_SOURCE_V1.patch
+          python3 - <<'PY'
+          import json
+          audit=json.load(open('r26_nonlinear_source_v1_audit.json'))
+          assert len(audit['enabled_evolution_terms']) == 3
+          assert len(audit['deliberately_disabled_blocks_remaining']) == 2
+          PY
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build -j 2
+          test -x astr/build/bin/astr
+
+      - name: Continue nonlinear-source R26 from 10k to 50k by 2k
+        shell: bash
+        run: |
+          set -euxo pipefail
+          chmod +x astr_r26_stage2/run_fixed_ladder.sh
+          ./astr_r26_stage2/run_fixed_ladder.sh \
+            r26_case "$(pwd)/astr/build/bin/astr" 10000 50000 2000
+
+      - name: Build 40k and 50k comparison cases
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for STEP in 40000 50000; do
+            LABEL=$(printf 'step_%05d' "$STEP")
+            CASE=$(printf 'comparison_case_%05d' "$STEP")
+            mkdir -p "$CASE/datin" "$CASE/outdat"
+            cp -a r26_case/datin/. "$CASE/datin/"
+            cp "checkpoints/${LABEL}/flowfield.h5" "$CASE/outdat/flowfield.h5"
+            cp "checkpoints/${LABEL}/auxiliary.h5" "$CASE/outdat/auxiliary.h5"
+            python3 astr_r26_stage1/compare_r26_r13_dsmc.py \
+              --r26-case "$CASE" --r13-case r13_40k \
+              --output "comparison/${LABEL}"
+          done
+
+      - name: Summarize nonlinear convergence at 40k and 50k
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          records=[]
+          for path in sorted(Path('convergence').glob('*.json')):
+              records.append(json.loads(path.read_text()))
+          summary={
+              'model':'Audited Maxwell R26 nonlinear-source v1',
+              'initial_step':10000,
+              'final_step':50000,
+              'required_checkpoints':[40000,50000],
+              'intervals':records,
+              'comparison_40k':'comparison/step_40000',
+              'comparison_50k':'comparison/step_50000',
+              'warning':'Nonlinear evolution sources are enabled; nonlinear regularization remainders and full wall audit remain incomplete.',
+          }
+          Path('convergence/fixed_10k_to_50k_summary.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+
+      - name: Package nonlinear-source 10k-to-50k result
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=ASTR_R26_NONLINEAR_SOURCE_V1_32X32_10K_TO_50K
+          mkdir -p "$ROOT/code"
+          cp -a checkpoints convergence summaries logs comparison "$ROOT/" || true
+          cp -a r26_case "$ROOT/final_case" || true
+          cp -a astr/src "$ROOT/patched_source_src" || true
+          cp ASTR_R26_STAGE1.patch ASTR_R26_NONLINEAR_SOURCE_V1.patch r26_stage1_source_audit.json r26_nonlinear_source_v1_audit.json "$ROOT/" || true
+          cp -a astr_r26_stage1 astr_r26_stage2 "$ROOT/code/"
+          zip -r -9 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload nonlinear-source 10k-to-50k artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_R26_NONLINEAR_SOURCE_V1_32X32_10K_TO_50K
+          path: |
+            ASTR_R26_NONLINEAR_SOURCE_V1_32X32_10K_TO_50K.zip
+            ASTR_R26_NONLINEAR_SOURCE_V1_32X32_10K_TO_50K.zip.sha256
+          compression-level: 0
+          retention-days: 7
