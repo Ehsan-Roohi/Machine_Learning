@@ -1,1 +1,1 @@
-Trigger patched ASTR nonlinear R13 JFM cavity run with consistent main-flow and moment-wall lid ramps.
+Trigger patched ASTR nonlinear R13 JFM cavity run with asserted source and CRLF-safe input edits.
