@@ -1,0 +1,1 @@
+Audit Gu-Emerson equations (16)-(26), apply the full-bulk Maxwell R26 v2 closure patch, retain the documented relaxed Appendix-C wall treatment, run fresh smoke gates, and continue the validated 50k state to 100k in 2k intervals.
