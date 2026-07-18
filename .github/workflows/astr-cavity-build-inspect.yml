@@ -1,0 +1,115 @@
+name: ASTR nonlinear R13 cavity build and inspect
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'trigger-astr-r13-cavity.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  build-inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and libraries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gfortran cmake make git openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev hdf5-tools python3 python3-numpy zip
+
+      - name: Clone ASTR mom_merge source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf work
+          mkdir -p work/artifact
+          git clone --depth 1 --branch mom_merge https://github.com/astr-code/astr.git work/astr
+          cd work/astr
+          git rev-parse HEAD | tee ../artifact/ASTR_mom_merge_commit.txt
+          git status --short --branch | tee ../artifact/source_status.txt
+          find examples/Lid-Driven-Cavity-Rarefied -maxdepth 5 -type f -printf '%p\n' | sort | tee ../artifact/cavity_file_list.txt
+          find . -maxdepth 3 -type f \( -iname '*readme*' -o -iname '*manual*' -o -iname '*moment*' \) -printf '%p\n' | sort | tee ../artifact/relevant_file_list.txt
+
+      - name: Configure and build ASTR
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd work/astr
+          mkdir -p build
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=ON \
+            -DCMAKE_Fortran_COMPILER=mpifort \
+            2>&1 | tee ../artifact/cmake_configure.log
+          cmake --build build --parallel 2 2>&1 | tee ../artifact/cmake_build.log
+          find . -type f -perm -111 -printf '%p %s bytes\n' | sort | tee ../artifact/executable_list.txt
+          ctest --test-dir build -N 2>&1 | tee ../artifact/ctest_list.log || true
+
+      - name: Inspect cavity inputs and attempt bundled run
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd work/astr
+          CAV=examples/Lid-Driven-Cavity-Rarefied
+          mkdir -p ../artifact/cavity_inputs ../artifact/bundled_run
+          cp -a "$CAV"/. ../artifact/cavity_inputs/
+          {
+            echo '=== INPUT FILE CONTENTS ==='
+            for f in $(find "$CAV" -type f | sort); do
+              echo
+              echo "===== $f ====="
+              file "$f" || true
+              if file "$f" | grep -qi text; then sed -n '1,400p' "$f"; fi
+            done
+          } > ../artifact/cavity_inputs_dump.txt
+
+          EXE=''
+          for cand in build/bin/astr bin/astr build/src/astr src/astr; do
+            if [ -x "$cand" ]; then EXE=$(readlink -f "$cand"); break; fi
+          done
+          echo "EXE=$EXE" | tee ../artifact/executable_path.txt
+          test -n "$EXE"
+
+          INPUT=$(find "$CAV/datin" -maxdepth 1 -type f | sort | head -1)
+          echo "INPUT=$INPUT" | tee ../artifact/selected_bundled_input.txt
+          test -n "$INPUT"
+          RUNDIR=$(readlink -f ../artifact/bundled_run)
+          cp -a "$CAV/datin" "$RUNDIR/"
+          cd "$RUNDIR"
+          set +e
+          timeout 900 mpirun --allow-run-as-root --oversubscribe -np 2 "$EXE" run "datin/$(basename "$INPUT")" \
+            > bundled_stdout.log 2> bundled_stderr.log
+          RC=$?
+          set -e
+          echo "$RC" > bundled_exit_code.txt
+          find . -maxdepth 4 -type f -printf '%p %s bytes\n' | sort > bundled_output_file_list.txt
+          if [ "$RC" -ne 0 ] && [ "$RC" -ne 124 ]; then
+            echo 'Bundled run did not complete successfully; preserving all logs for diagnosis.'
+          fi
+
+      - name: Package source and diagnostics
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd work
+          rm -rf astr/.git astr/build/CMakeFiles
+          zip -r -6 ASTR_mom_merge_SOURCE_BUILD_INSPECT.zip astr artifact
+          sha256sum ASTR_mom_merge_SOURCE_BUILD_INSPECT.zip > ASTR_mom_merge_SOURCE_BUILD_INSPECT.zip.sha256
+          test -s ASTR_mom_merge_SOURCE_BUILD_INSPECT.zip
+
+      - name: Upload source and build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_MOM_MERGE_SOURCE_BUILD_INSPECT
+          path: |
+            work/ASTR_mom_merge_SOURCE_BUILD_INSPECT.zip
+            work/ASTR_mom_merge_SOURCE_BUILD_INSPECT.zip.sha256
+          compression-level: 0
+          retention-days: 7
