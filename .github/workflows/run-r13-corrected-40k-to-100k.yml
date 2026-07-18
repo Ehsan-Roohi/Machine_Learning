@@ -1,0 +1,233 @@
+name: Continue corrected ASTR R13 from 40k to 100k
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'run-r13-corrected-100k-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: astr-r13-corrected-100k-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  corrected-r13-to-100k:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and analysis libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran cmake make openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev unzip zip \
+            python3-h5py python3-numpy python3-scipy python3-matplotlib python3-pandas
+
+      - name: Download verified ASTR source bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: source_artifact
+
+      - name: Download validated R13 40k seed
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000
+          run-id: 29647840498
+          github-token: ${{ github.token }}
+          path: r13_artifact
+
+      - name: Restore source and R13 seed
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SOURCE_INNER=$(find source_artifact -type f -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          mkdir source_restored
+          unzip -q "$SOURCE_INNER" -d source_restored
+          cp -a source_restored/astr ./astr
+          rm -rf astr/build
+
+          R13_INNER=$(find r13_artifact -type f -name 'ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000.zip' -print -quit)
+          mkdir r13_restored
+          unzip -q "$R13_INNER" -d r13_restored
+          R13_ROOT=$(find r13_restored -type d -name 'ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000' -print -quit)
+          cp -a "$R13_ROOT" ./r13_case
+          cp -a r13_case/input r13_case/datin
+          test -f r13_case/outdat/flowfield.h5
+
+      - name: Apply audited R13 Delta divergence correction and build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p audits patches
+          python3 - <<'PY_PATCH'
+          from pathlib import Path
+          import difflib, json
+          p=Path('astr/src/methodmoment.F90'); original=p.read_text()
+          old='(dqx(0:im,0:jm,0:km,1)+dqy(0:im,0:jm,0:km,2)+dqy(0:im,0:jm,0:km,3))'
+          new='(dqx(0:im,0:jm,0:km,1)+dqy(0:im,0:jm,0:km,2)+dqz(0:im,0:jm,0:km,3))'
+          if original.count(old)!=1: raise RuntimeError(f'expected one typo, found {original.count(old)}')
+          patched=original.replace(old,new,1); p.write_text(patched)
+          Path('patches/ASTR_R13_DELTA_DIVERGENCE_FIX.patch').write_text(''.join(difflib.unified_diff(original.splitlines(True),patched.splitlines(True),fromfile='methodmoment.F90.upstream',tofile='methodmoment.F90.r13-fix')))
+          report={'change':'dqy(...,3) -> dqz(...,3) in deltacal','replacements':1,'reason':'third contribution to div(q) is d(q_z)/dz','restart_caveat':'40k seed predates correction'}
+          Path('audits/r13_delta_divergence_fix.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+          PY_PATCH
+          grep -n -C2 'dqz(0:im,0:jm,0:km,3)' astr/src/methodmoment.F90
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build -j 2
+          test -x astr/build/bin/astr
+
+      - name: Prepare corrected R13 restart at 40k
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p checkpoints convergence summaries logs comparison
+          python3 - <<'PY'
+          from pathlib import Path
+          import h5py, shutil, numpy as np
+          case=Path('r13_case')
+          p=next((case/'datin').glob('input.astr*'))
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# lrestar'):
+                  lines[i+1]='t'; break
+          else:
+              raise RuntimeError('lrestar entry not found')
+          p.write_text('\n'.join(lines)+'\n')
+          with h5py.File(case/'outdat/flowfield.h5','r') as h:
+              assert int(h['nstep'][0]) == 40000
+              for key in ['ro','p','t','u1','u2','qx','qy','Rxx','Rxy','Ryy','Delta']:
+                  a=np.asarray(h[key],dtype=float)
+                  assert np.isfinite(a).all()
+          d=Path('checkpoints/step_040000'); d.mkdir()
+          shutil.copy2(case/'outdat/flowfield.h5',d/'flowfield.h5')
+          shutil.copy2(case/'outdat/auxiliary.h5',d/'auxiliary.h5')
+          PY
+          python3 astr_r26_stage1/compare_r26_r13_dsmc.py \
+            --r26-case r13_case --r13-case r13_case --output comparison/step_040000
+
+      - name: Continue corrected R13 from 40k to 100k by 5k
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INPUT=$(basename "$(find r13_case/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+          PREVIOUS=40000
+          for TARGET in $(seq 45000 5000 100000); do
+            python3 - "$TARGET" <<'PY'
+          import sys
+          from pathlib import Path
+          target=int(sys.argv[1]); p=Path('r13_case/datin/controller')
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# maxstep,feqchkpt'):
+                  lines[i+1]=f"{target:9d},    5000,    5000,     500,     200,   200"; break
+          else:
+              raise RuntimeError('controller maxstep entry not found')
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+            LABEL=$(printf 'step_%06d' "$TARGET")
+            PREV_LABEL=$(printf 'step_%06d' "$PREVIOUS")
+            (cd r13_case && /usr/bin/time -v mpirun --oversubscribe -np 4 ../astr/build/bin/astr run "datin/${INPUT}" > "../logs/${LABEL}.log" 2> "../logs/${LABEL}_time.log")
+            ! grep -q 'COMPUTATION CRASHED' "logs/${LABEL}.log"
+            python3 - "$TARGET" "$LABEL" <<'PY'
+          import h5py, numpy as np, sys, json
+          from pathlib import Path
+          target=int(sys.argv[1]); label=sys.argv[2]
+          path=Path('r13_case/outdat/flowfield.h5')
+          result={'target_step':target,'fields':{}}
+          with h5py.File(path,'r') as h:
+              nstep=int(h['nstep'][0]); result['nstep']=nstep; result['time']=float(h['time'][0])
+              if nstep != target: raise RuntimeError(f'nstep={nstep}, target={target}')
+              for key in ['ro','p','t','u1','u2','qx','qy','Rxx','Rxy','Ryy','Delta']:
+                  a=np.asarray(h[key],dtype=float)
+                  if not np.isfinite(a).all(): raise FloatingPointError(key)
+                  result['fields'][key]={'min':float(a.min()),'max':float(a.max()),'rms':float(np.sqrt(np.mean(a*a)))}
+              for key in ['ro','p','t']:
+                  if np.asarray(h[key],dtype=float).min() <= 0: raise FloatingPointError(f'non-positive {key}')
+          Path(f'summaries/{label}.json').write_text(json.dumps(result,indent=2))
+          PY
+            python3 astr_r26_stage2/checkpoint_convergence.py \
+              --previous "checkpoints/${PREV_LABEL}/flowfield.h5" \
+              --current r13_case/outdat/flowfield.h5 \
+              --output "convergence/${PREV_LABEL}_to_${LABEL}.json"
+            mkdir "checkpoints/${LABEL}"
+            cp r13_case/outdat/flowfield.h5 r13_case/outdat/auxiliary.h5 "checkpoints/${LABEL}/"
+            PREVIOUS=$TARGET
+          done
+
+      - name: Analyze corrected R13 at 50k 60k 80k and 100k
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for STEP in 50000 60000 80000 100000; do
+            LABEL=$(printf 'step_%06d' "$STEP")
+            CASE="comparison/case_${LABEL}"
+            cp -a r13_case "$CASE"
+            cp "checkpoints/${LABEL}/flowfield.h5" "$CASE/outdat/flowfield.h5"
+            cp "checkpoints/${LABEL}/auxiliary.h5" "$CASE/outdat/auxiliary.h5"
+            python3 astr_r26_stage1/compare_r26_r13_dsmc.py \
+              --r26-case "$CASE" --r13-case "$CASE" --output "comparison/${LABEL}"
+          done
+
+      - name: Summarize corrected R13 convergence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, pandas as pd
+          records=[]
+          for path in sorted(Path('convergence').glob('*.json')):
+              d=json.loads(path.read_text())
+              records.append({'previous_step':d['previous_step'],'current_step':d['current_step'],**d['relative_RMS_change_percent'],**d['criteria']})
+          pd.DataFrame(records).to_csv('convergence/corrected_r13_40k_to_100k.csv',index=False)
+          metrics=[]
+          for step in [40000,50000,60000,80000,100000]:
+              d=json.loads(Path(f'comparison/step_{step:06d}/comparison_summary.json').read_text())
+              metrics.append({'step':step,**{k:d['R26'][k] for k in ['f_AF_active','mean_IAF_AF','PDelta_over_PR','mean_chiDelta']}})
+          pd.DataFrame(metrics).to_csv('comparison/corrected_r13_metrics_40k_to_100k.csv',index=False)
+          summary={
+              'model_label':'ASTR nonlinear R13 with corrected Delta div(q)',
+              'initial_step':40000,
+              'final_step':100000,
+              'important_caveat':'The 40k restart seed predates the dqz correction; convergence and a future from-equilibrium cross-check are required before publication use.'
+          }
+          Path('audits/corrected_r13_100k_summary.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+
+      - name: Package corrected R13 result
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=ASTR_R13_CORRECTED_DELTA_40K_TO_100K
+          mkdir -p "$ROOT/code"
+          cp -a checkpoints convergence summaries logs comparison audits patches "$ROOT/" || true
+          cp -a r13_case "$ROOT/final_case" || true
+          cp -a astr/src "$ROOT/patched_source_src" || true
+          cp -a astr_r26_stage1 astr_r26_stage2 "$ROOT/code/"
+          zip -r -9 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+          test -s "${ROOT}.zip"
+
+      - name: Upload corrected R13 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_R13_CORRECTED_DELTA_40K_TO_100K
+          path: |
+            ASTR_R13_CORRECTED_DELTA_40K_TO_100K.zip
+            ASTR_R13_CORRECTED_DELTA_40K_TO_100K.zip.sha256
+          compression-level: 0
+          retention-days: 7
