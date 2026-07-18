@@ -1,0 +1,258 @@
+name: Continue ASTR nonlinear R13 cavity to 30000
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'continue-astr-r13-cavity-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  continue-r13:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and analysis libraries
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gfortran cmake make openmpi-bin libopenmpi-dev libhdf5-openmpi-dev hdf5-tools python3-numpy python3-scipy python3-matplotlib python3-h5py zip unzip
+
+      - name: Download 10000-step checkpoint artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          repository: Ehsan-Roohi/Machine_Learning
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: previous_artifact
+
+      - name: Restore source and checkpoint
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p restored continuation/checkpoints
+          INNER=$(find previous_artifact -type f -name '*RESULTS.zip' | head -1)
+          test -n "$INNER"
+          unzip -q "$INNER" -d restored
+          test -d restored/astr
+          test -d restored/case
+          cp -a restored/astr continuation/astr
+          cp -a restored/case continuation/case
+          printf 'restored_from_run=%s\nrestored_artifact=%s\n' '29624062741' '8423501296' > continuation/PROVENANCE.txt
+
+      - name: Rebuild ASTR mom_merge
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd continuation/astr
+          rm -rf build
+          mkdir build
+          cd build
+          cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF .. 2>&1 | tee ../../cmake_configure_continue.log
+          make -j2 2>&1 | tee ../../cmake_build_continue.log
+          test -x bin/astr
+
+      - name: Configure restart from step 10000
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('continuation/case/datin/input.astr_r13_jfm')
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if 'lrestar' in line.lower() and line.lstrip().startswith('#'):
+                  j=i+1
+                  while j < len(lines) and (not lines[j].strip() or lines[j].lstrip().startswith('#')):
+                      j+=1
+                  lines[j]='t'
+                  break
+          else:
+              raise SystemExit('lrestar marker not found')
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+          grep -A2 -i lrestar continuation/case/datin/input.astr_r13_jfm
+
+      - name: Continue to step 20000
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('continuation/case/datin/controller')
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if 'maxstep,feqchkpt' in line.replace(' ','').lower():
+                  j=i+1
+                  while j < len(lines) and (not lines[j].strip() or lines[j].lstrip().startswith('#')):
+                      j+=1
+                  lines[j]='    20000,   10000,   10000,    1000,    1000,  1000'
+                  break
+          else:
+              raise SystemExit('controller marker not found')
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+          cd continuation/case
+          set +e
+          /usr/bin/time -v timeout 7200 mpirun --allow-run-as-root --oversubscribe -np 4 ../astr/build/bin/astr run datin/input.astr_r13_jfm > ../run_10000_to_20000_stdout.log 2> ../run_10000_to_20000_stderr_time.log
+          rc=$?
+          set -e
+          echo "$rc" > ../run_10000_to_20000_exit_code.txt
+          test "$rc" -eq 0
+          test "$(h5dump -d nstep outdat/flowfield.h5 | grep -oE '[0-9]+' | tail -1)" -ge 20000
+          mkdir -p ../checkpoints/step_20000
+          cp -a outdat bakup datin flowstate.dat time_report.* errnode.log visu.xdmf ../checkpoints/step_20000/ 2>/dev/null || true
+
+      - name: Continue to step 30000
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('continuation/case/datin/controller')
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if 'maxstep,feqchkpt' in line.replace(' ','').lower():
+                  j=i+1
+                  while j < len(lines) and (not lines[j].strip() or lines[j].lstrip().startswith('#')):
+                      j+=1
+                  lines[j]='    30000,   10000,   10000,    1000,    1000,  1000'
+                  break
+          else:
+              raise SystemExit('controller marker not found')
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+          cd continuation/case
+          set +e
+          /usr/bin/time -v timeout 7200 mpirun --allow-run-as-root --oversubscribe -np 4 ../astr/build/bin/astr run datin/input.astr_r13_jfm > ../run_20000_to_30000_stdout.log 2> ../run_20000_to_30000_stderr_time.log
+          rc=$?
+          set -e
+          echo "$rc" > ../run_20000_to_30000_exit_code.txt
+          test "$rc" -eq 0
+          test "$(h5dump -d nstep outdat/flowfield.h5 | grep -oE '[0-9]+' | tail -1)" -ge 30000
+          mkdir -p ../checkpoints/step_30000
+          cp -a outdat bakup datin flowstate.dat time_report.* errnode.log visu.xdmf ../checkpoints/step_30000/ 2>/dev/null || true
+
+      - name: Analyze convergence and make plots
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat > continuation/analyze_continuation.py <<'PY'
+          from pathlib import Path
+          import csv, json, math
+          import h5py
+          import numpy as np
+          import matplotlib
+          matplotlib.use('Agg')
+          import matplotlib.pyplot as plt
+          from scipy.ndimage import uniform_filter
+
+          root=Path('continuation')
+          cps={
+              10000: Path('restored/case/outdat/flowfield.h5'),
+              20000: root/'checkpoints/step_20000/outdat/flowfield.h5',
+              30000: root/'checkpoints/step_30000/outdat/flowfield.h5',
+          }
+          grid=Path('restored/case/datin/grid.h5')
+          with h5py.File(grid,'r') as h:
+              X=np.array(h['x'])[0]
+              Y=np.array(h['y'])[0]
+          fields=['ro','u1','u2','p','t','sigmaxx','sigmaxy','sigmayy','qx','qy','mxxx','mxxy','mxyy','myyy','Rxx','Rxy','Ryy','Delta']
+          data={}
+          summary={}
+          for step,path in cps.items():
+              with h5py.File(path,'r') as h:
+                  data[step]={k:np.array(h[k])[0] for k in fields}
+                  summary[str(step)]={'time':float(np.array(h['time'])[0]),'nstep':int(np.array(h['nstep'])[0])}
+                  for k,a in data[step].items():
+                      summary[str(step)][k]={'min':float(np.nanmin(a)),'max':float(np.nanmax(a)),'rms':float(np.sqrt(np.nanmean(a*a))),'finite':bool(np.isfinite(a).all())}
+          comparisons={}
+          for a,b in [(10000,20000),(20000,30000)]:
+              key=f'{a}_to_{b}'
+              comparisons[key]={}
+              for k in fields:
+                  da=data[b][k]-data[a][k]
+                  denom=np.linalg.norm(data[b][k].ravel())+1e-300
+                  comparisons[key][k]={'relative_L2':float(np.linalg.norm(da.ravel())/denom),'Linf':float(np.max(np.abs(da)))}
+          (root/'field_summary.json').write_text(json.dumps(summary,indent=2))
+          (root/'checkpoint_comparisons.json').write_text(json.dumps(comparisons,indent=2))
+
+          # Parse every-1000-step flowstate values and estimate last-interval relative change.
+          convergence={}
+          for step in [10000,20000,30000]:
+              p=(Path('restored/case/flowstate.dat') if step==10000 else root/f'checkpoints/step_{step}/flowstate.dat')
+              rows=[]
+              for line in p.read_text(errors='ignore').splitlines():
+                  parts=line.split()
+                  if len(parts)>=7:
+                      try:
+                          vals=[float(x) for x in parts[:7]]
+                      except ValueError:
+                          continue
+                      rows.append(vals)
+              arr=np.array(rows)
+              end=arr[-1]
+              target=end[0]-1000
+              prev=arr[np.argmin(np.abs(arr[:,0]-target))]
+              rel=np.abs((end[2:7]-prev[2:7])/(np.abs(end[2:7])+1e-300))
+              convergence[str(step)]={'end_row':end.tolist(),'previous_1000_row':prev.tolist(),'relative_change_last_1000':rel.tolist()}
+          (root/'flowstate_convergence.json').write_text(json.dumps(convergence,indent=2))
+
+          f=data[30000]
+          u=f['u1']; v=f['u2']; T=f['t']; qx=f['qx']; qy=f['qy']
+          speed=np.hypot(u,v)
+          Ts=uniform_filter(T,size=7,mode='nearest')
+          qxs=uniform_filter(qx,size=7,mode='nearest'); qys=uniform_filter(qy,size=7,mode='nearest')
+          # Grid is Cartesian but retain coordinate-aware gradients.
+          x=X[0,:]; y=Y[:,0]
+          dTdy,dTdx=np.gradient(Ts,y,x,edge_order=2)
+          qmag=np.hypot(qxs,qys); gmag=np.hypot(dTdx,dTdy)
+          denom=qmag*gmag
+          iaf=np.full_like(T,np.nan)
+          valid=denom>1e-14
+          iaf[valid]=(qxs[valid]*dTdx[valid]+qys[valid]*dTdy[valid])/denom[valid]
+          active=valid&(qmag>=0.05*np.nanmax(qmag))&(gmag>=0.05*np.nanmax(gmag))
+          af=active&(iaf>0)
+          af_metrics={'active_cells':int(active.sum()),'anti_fourier_cells':int(af.sum()),'f_AF_active':float(af.sum()/active.sum()),'mean_IAF_AF':float(np.nanmean(iaf[af]))}
+          (root/'anti_fourier_metrics_step30000.json').write_text(json.dumps(af_metrics,indent=2))
+
+          fig,ax=plt.subplots(figsize=(6,5)); c=ax.contourf(X,Y,speed,40); ax.streamplot(x,y,u,v,density=1.4,linewidth=.7); fig.colorbar(c,ax=ax,label='dimensionless speed'); ax.set(xlabel='x/L',ylabel='y/L',title='ASTR nonlinear R13 velocity, step 30000'); ax.set_aspect('equal'); fig.tight_layout(); fig.savefig(root/'velocity_streamlines_step30000.png',dpi=180); plt.close(fig)
+          fig,ax=plt.subplots(figsize=(6,5)); c=ax.contourf(X,Y,T,40); fig.colorbar(c,ax=ax,label='dimensionless temperature'); ax.set(xlabel='x/L',ylabel='y/L',title='ASTR nonlinear R13 temperature, step 30000'); ax.set_aspect('equal'); fig.tight_layout(); fig.savefig(root/'temperature_step30000.png',dpi=180); plt.close(fig)
+          fig,ax=plt.subplots(figsize=(6,5)); m=np.ma.masked_where(~active,iaf); c=ax.contourf(X,Y,m,np.linspace(-1,1,41),extend='both');
+          if af.any(): ax.contour(X,Y,af.astype(float),levels=[.5],colors='k',linewidths=1)
+          fig.colorbar(c,ax=ax,label='q·grad(T)/(|q||grad(T)|)'); ax.set(xlabel='x/L',ylabel='y/L',title=f'ASTR nonlinear R13 anti-Fourier, step 30000\nf_AF|active={af_metrics["f_AF_active"]:.3f}'); ax.set_aspect('equal'); fig.tight_layout(); fig.savefig(root/'anti_fourier_step30000.png',dpi=180); plt.close(fig)
+
+          report=['# ASTR nonlinear R13 continuation report','',f'- Restarted from step 10000 and continued to steps 20000 and 30000.','- Grid: 64 x 64; Kn=0.05; Mach=0.3099879; U_lid=100 m/s interpretation.','', '## Last-1000-step relative changes']
+          for step in [10000,20000,30000]: report.append(f'- Step {step}: '+', '.join(f'q{i+1}={v:.6g}' for i,v in enumerate(convergence[str(step)]['relative_change_last_1000'])))
+          report += ['', '## Field relative L2 changes', '### 10000 to 20000']
+          for k in fields: report.append(f'- {k}: {comparisons["10000_to_20000"][k]["relative_L2"]:.6g}')
+          report += ['', '### 20000 to 30000']
+          for k in fields: report.append(f'- {k}: {comparisons["20000_to_30000"][k]["relative_L2"]:.6g}')
+          report += ['', '## Step-30000 anti-Fourier diagnostic', f'- f_AF|active = {af_metrics["f_AF_active"]:.6f}', f'- mean I_AF in AF set = {af_metrics["mean_IAF_AF"]:.6f}']
+          (root/'CONTINUATION_REPORT.md').write_text('\n'.join(report)+'\n')
+          PY
+          python3 continuation/analyze_continuation.py
+
+      - name: Package continuation results
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf continuation/astr/.git
+          zip -r -9 ASTR_NONLINEAR_R13_JFM_CAVITY_STEPS_10000_20000_30000.zip continuation restored/case/outdat restored/case/datin restored/case/flowstate.dat >/dev/null
+          sha256sum ASTR_NONLINEAR_R13_JFM_CAVITY_STEPS_10000_20000_30000.zip > ASTR_NONLINEAR_R13_JFM_CAVITY_STEPS_10000_20000_30000.zip.sha256
+
+      - name: Upload continuation results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_TO_30000
+          path: |
+            ASTR_NONLINEAR_R13_JFM_CAVITY_STEPS_10000_20000_30000.zip
+            ASTR_NONLINEAR_R13_JFM_CAVITY_STEPS_10000_20000_30000.zip.sha256
+          compression-level: 0
+          retention-days: 7
