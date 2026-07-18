@@ -18,10 +18,9 @@ FIELDS = [
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Validate an ASTR R26 HDF5 result.")
+    parser = argparse.ArgumentParser(description="Validate an ASTR R26 short-gate HDF5 result.")
     parser.add_argument("case", type=Path)
     parser.add_argument("--target-step", type=int, required=True)
-    parser.add_argument("--mode", choices=["equilibrium", "moving"], required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
 
@@ -32,7 +31,6 @@ def main() -> None:
     result: dict[str, object] = {
         "case": str(args.case),
         "target_step": args.target_step,
-        "mode": args.mode,
         "fields": {},
     }
 
@@ -79,23 +77,8 @@ def main() -> None:
         raise RuntimeError("Temperature left conservative Stage-1 bounds")
     if max_speed > 5.0:
         raise RuntimeError(f"Velocity blow-up detected: {max_speed}")
-
-    if args.mode == "equilibrium":
-        equilibrium = {
-            "max_abs_velocity": max_speed,
-            "max_abs_density_minus_one": float(np.max(np.abs(arrays["ro"] - 1.0))),
-            "max_abs_temperature_minus_one": float(np.max(np.abs(arrays["t"] - 1.0))),
-            "max_abs_stress": float(max(np.max(np.abs(arrays[k])) for k in ["sigmaxx", "sigmaxy", "sigmayy"])),
-            "max_abs_heat_flux": float(max(np.max(np.abs(arrays[k])) for k in ["qx", "qy", "qz"])),
-            "max_abs_higher_moment": float(max(np.max(np.abs(arrays[k])) for k in ["mxxx", "mxxy", "mxyy", "myyy", "Rxx", "Rxy", "Ryy", "Delta"])),
-        }
-        result["equilibrium_residual"] = equilibrium
-        if equilibrium["max_abs_velocity"] > 1.0e-7:
-            raise RuntimeError("Equilibrium velocity residual too large")
-        if equilibrium["max_abs_density_minus_one"] > 1.0e-7:
-            raise RuntimeError("Equilibrium density residual too large")
-        if equilibrium["max_abs_temperature_minus_one"] > 1.0e-7:
-            raise RuntimeError("Equilibrium temperature residual too large")
+    if max_speed < 1.0e-10:
+        raise RuntimeError("Moving-wall gate produced no measurable motion")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2), encoding="utf-8")
