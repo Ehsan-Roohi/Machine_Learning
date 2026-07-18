@@ -74,8 +74,9 @@ def main() -> None:
     mach = BASE_MACH_U100 * speed / 100.0
     reynolds = BASE_RE_U100 * speed / 100.0
     if args.equilibrium:
-        mach = 1.0e-12
-        reynolds = 1.0e-12
+        scale = 1.0e-12
+        mach = BASE_MACH_U100 * scale
+        reynolds = BASE_RE_U100 * scale
 
     replace_value_after_comment(
         input_lines,
