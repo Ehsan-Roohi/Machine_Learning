@@ -225,12 +225,12 @@ jobs:
         run: |
           set -euxo pipefail
           ROOT=ASTR_R26_NONLINEAR_SOURCE_V1_32X32_TO_10K
-          mkdir -p "$ROOT"
+          mkdir -p "$ROOT/code"
           cp -a checkpoints convergence summaries logs comparison "$ROOT/" || true
           cp -a cases/u100_32 "$ROOT/final_case" || true
           cp -a astr/src "$ROOT/patched_source_src" || true
           cp ASTR_R26_STAGE1.patch ASTR_R26_NONLINEAR_SOURCE_V1.patch r26_stage1_source_audit.json r26_nonlinear_source_v1_audit.json "$ROOT/" || true
-          cp -a astr_r26_stage1 astr_r26_stage2 "$ROOT/code"
+          cp -a astr_r26_stage1 astr_r26_stage2 "$ROOT/code/"
           zip -r -9 "${ROOT}.zip" "$ROOT"
           sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
 
@@ -242,5 +242,6 @@ jobs:
           path: |
             ASTR_R26_NONLINEAR_SOURCE_V1_32X32_TO_10K.zip
             ASTR_R26_NONLINEAR_SOURCE_V1_32X32_TO_10K.zip.sha256
+          if-no-files-found: error
           compression-level: 0
           retention-days: 7
