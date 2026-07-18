@@ -1,1 +1,1 @@
-Start independent from-scratch nonlinear ASTR R13 cavity runs to 20,000 and 30,000 steps.
+Retry independent from-scratch nonlinear ASTR R13 cavity runs to 20,000 and 30,000 steps with MPI oversubscribe enabled.
