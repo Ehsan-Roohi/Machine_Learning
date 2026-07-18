@@ -1,0 +1,376 @@
+--- methodmoment.F90.stage2
++++ methodmoment.F90.full-bulk-v2
+@@ -762,6 +762,7 @@
+                              /(Aphi1*const2)*Eijkl(0:im,0:jm,0:km,n)
+     enddo
+     !
++    call r26_full_phi_closure()
+     call dataswap(Eijkl)
+     !
+     allocate(ff(-hm:im+hm,1:7),df(0:im,1:7))
+@@ -990,6 +991,7 @@
+                                             dRij(0:im,0:jm,0:km,2,3) + & ! dRxz/dy
+                                             dRij(0:im,0:jm,0:km,1,5) )   ! dRyz/dx
+     !
++    call r26_full_psi_closure()
+     call dataswap(psi)
+     !
+     allocate(ff(-hm:im+hm,1:5),df(0:im,1:5))
+@@ -1147,16 +1149,14 @@
+       omega(i,j,k,3)=-var1*num7d3*ddelta(i,j,k,3)  
+ 
+       !
+-      omega(i,j,k,1)= omega(i,j,k,1)-var1*(4.d0*(dRij(i,j,k,1,1)+dRij(i,j,k,2,2)+dRij(i,j,k,3,3)))*0.1d0
+       !
+-      omega(i,j,k,2)= omega(i,j,k,2)-var1*(4.d0*(dRij(i,j,k,1,2)+dRij(i,j,k,2,4)+dRij(i,j,k,3,5)))*0.1d0
+       
+-      omega(i,j,k,3)= omega(i,j,k,3)-var1*(4.d0*(dRij(i,j,k,1,3)+dRij(i,j,k,2,5)+dRij(i,j,k,3,6)))*0.1d0
+ 
+     enddo
+     enddo
+     enddo
+     !
++    call r26_full_omega_closure()
+     call dataswap(omega)
+     !
+     allocate(ff(-hm:im+hm),df(0:im))
+@@ -2399,7 +2399,7 @@
+     !
+     co1=-8.d0/Adelta1/const2
+     delta(0:im,0:jm,0:km)=co1*miu(0:im,0:jm,0:km)*tmp(0:im,0:jm,0:km)/prs(0:im,0:jm,0:km)* &
+-                           (dqx(0:im,0:jm,0:km,1)+dqy(0:im,0:jm,0:km,2)+dqy(0:im,0:jm,0:km,3))
++                           (dqx(0:im,0:jm,0:km,1)+dqy(0:im,0:jm,0:km,2)+dqz(0:im,0:jm,0:km,3))
+     !
+   end subroutine deltacal
+   !+-------------------------------------------------------------------+
+@@ -6092,6 +6092,330 @@
+        end subroutine extraplotionR26
+ 
+ 
++  !+-------------------------------------------------------------------+
++  !| Paper-faithful Gu-Emerson (2009) bulk R26 closures.              |
++  !| Equations (23)-(26), Maxwell molecules.                           |
++  !| These routines overwrite the preliminary gradient-only fields.   |
++  !+-------------------------------------------------------------------+
++  pure real(8) function kd(a,b)
++    integer,intent(in) :: a,b
++    if (a == b) then
++      kd=1.d0
++    else
++      kd=0.d0
++    endif
++  end function kd
++
++  subroutine stf3_project(raw,out)
++    real(8),intent(in)  :: raw(3,3,3)
++    real(8),intent(out) :: out(3,3,3)
++    real(8) :: sym(3,3,3),tr(3)
++    integer :: i,j,k,a,b,c,idx(3),cnt
++    sym=0.d0
++    do i=1,3; do j=1,3; do k=1,3
++      idx=(/i,j,k/); cnt=0
++      do a=1,3; do b=1,3
++        if (b == a) cycle
++        do c=1,3
++          if (c == a .or. c == b) cycle
++          sym(i,j,k)=sym(i,j,k)+raw(idx(a),idx(b),idx(c))
++          cnt=cnt+1
++        enddo
++      enddo; enddo
++      sym(i,j,k)=sym(i,j,k)/dble(cnt)
++    enddo; enddo; enddo
++    tr=0.d0
++    do k=1,3
++      do i=1,3
++        tr(k)=tr(k)+sym(i,i,k)
++      enddo
++    enddo
++    do i=1,3; do j=1,3; do k=1,3
++      out(i,j,k)=sym(i,j,k)-0.2d0*(kd(i,j)*tr(k)+kd(i,k)*tr(j)+kd(j,k)*tr(i))
++    enddo; enddo; enddo
++  end subroutine stf3_project
++
++  subroutine stf4_project(raw,out)
++    real(8),intent(in)  :: raw(3,3,3,3)
++    real(8),intent(out) :: out(3,3,3,3)
++    real(8) :: sym(3,3,3,3),tr2(3,3),tr4
++    integer :: i,j,k,l,a,b,c,d,idx(4),cnt
++    sym=0.d0
++    do i=1,3; do j=1,3; do k=1,3; do l=1,3
++      idx=(/i,j,k,l/); cnt=0
++      do a=1,4; do b=1,4
++        if (b == a) cycle
++        do c=1,4
++          if (c == a .or. c == b) cycle
++          do d=1,4
++            if (d == a .or. d == b .or. d == c) cycle
++            sym(i,j,k,l)=sym(i,j,k,l)+raw(idx(a),idx(b),idx(c),idx(d))
++            cnt=cnt+1
++          enddo
++        enddo
++      enddo; enddo
++      sym(i,j,k,l)=sym(i,j,k,l)/dble(cnt)
++    enddo; enddo; enddo; enddo
++    tr2=0.d0
++    do k=1,3; do l=1,3
++      do i=1,3
++        tr2(k,l)=tr2(k,l)+sym(i,i,k,l)
++      enddo
++    enddo; enddo
++    tr4=0.d0
++    do i=1,3
++      tr4=tr4+tr2(i,i)
++    enddo
++    do i=1,3; do j=1,3; do k=1,3; do l=1,3
++      out(i,j,k,l)=sym(i,j,k,l) &
++        -(kd(i,j)*tr2(k,l)+kd(i,k)*tr2(j,l)+kd(i,l)*tr2(j,k) &
++         +kd(j,k)*tr2(i,l)+kd(j,l)*tr2(i,k)+kd(k,l)*tr2(i,j))/7.d0 &
++        +(kd(i,j)*kd(k,l)+kd(i,k)*kd(j,l)+kd(i,l)*kd(j,k))*tr4/35.d0
++    enddo; enddo; enddo; enddo
++  end subroutine stf4_project
++
++  subroutine unpack_stf2(v,a)
++    real(8),intent(in) :: v(5)
++    real(8),intent(out):: a(3,3)
++    a=0.d0
++    a(1,1)=v(1); a(1,2)=v(2); a(2,1)=v(2)
++    a(1,3)=v(3); a(3,1)=v(3); a(2,2)=v(4)
++    a(2,3)=v(5); a(3,2)=v(5); a(3,3)=-v(1)-v(4)
++  end subroutine unpack_stf2
++
++  subroutine unpack_stf3(v,a)
++    real(8),intent(in) :: v(7)
++    real(8),intent(out):: a(3,3,3)
++    real(8) :: m133,m233,m333
++    a=0.d0
++    m133=-v(1)-v(4); m233=-v(2)-v(5); m333=-v(3)-v(6)
++    a(1,1,1)=v(1)
++    a(1,1,2)=v(2); a(1,2,1)=v(2); a(2,1,1)=v(2)
++    a(1,1,3)=v(3); a(1,3,1)=v(3); a(3,1,1)=v(3)
++    a(1,2,2)=v(4); a(2,1,2)=v(4); a(2,2,1)=v(4)
++    a(2,2,2)=v(5)
++    a(2,2,3)=v(6); a(2,3,2)=v(6); a(3,2,2)=v(6)
++    a(1,2,3)=v(7); a(1,3,2)=v(7); a(2,1,3)=v(7)
++    a(2,3,1)=v(7); a(3,1,2)=v(7); a(3,2,1)=v(7)
++    a(1,3,3)=m133; a(3,1,3)=m133; a(3,3,1)=m133
++    a(2,3,3)=m233; a(3,2,3)=m233; a(3,3,2)=m233
++    a(3,3,3)=m333
++  end subroutine unpack_stf3
++
++  subroutine pack_stf3(a,v)
++    real(8),intent(in) :: a(3,3,3)
++    real(8),intent(out):: v(7)
++    v(1)=a(1,1,1); v(2)=a(1,1,2); v(3)=a(1,1,3)
++    v(4)=a(1,2,2); v(5)=a(2,2,2); v(6)=a(2,2,3)
++    v(7)=a(1,2,3)
++  end subroutine pack_stf3
++
++  subroutine pack_stf4(a,v)
++    real(8),intent(in) :: a(3,3,3,3)
++    real(8),intent(out):: v(9)
++    v(1)=a(1,1,1,1); v(2)=a(1,1,1,2); v(3)=a(1,1,1,3)
++    v(4)=a(1,1,2,2); v(5)=a(1,1,2,3); v(6)=a(1,2,2,2)
++    v(7)=a(1,2,2,3); v(8)=a(2,2,2,2); v(9)=a(2,2,2,3)
++  end subroutine pack_stf4
++
++  subroutine load_local_tensors(ii,jj,kk,sig,rr,mm,gu,gs,gq,gr,gm,gp,grho,grt)
++    use commvar,only: const2
++    use commarray,only: rho,prs,tmp,sigma,qflux,dvel,dtmp
++    integer,intent(in)::ii,jj,kk
++    real(8),intent(out)::sig(3,3),rr(3,3),mm(3,3,3),gu(3,3)
++    real(8),intent(out)::gs(3,3,3),gq(3,3),gr(3,3,3),gm(3,3,3,3)
++    real(8),intent(out)::gp(3),grho(3),grt(3)
++    real(8)::sv(5),rv(5),mv(7),rtv
++    integer::a,b,c,d
++    sv=(/sigma(ii,jj,kk,1),sigma(ii,jj,kk,2),sigma(ii,jj,kk,3), &
++         sigma(ii,jj,kk,4),sigma(ii,jj,kk,5)/)
++    rv=(/rij(ii,jj,kk,1),rij(ii,jj,kk,2),rij(ii,jj,kk,3), &
++         rij(ii,jj,kk,4),rij(ii,jj,kk,5)/)
++    mv=mijk(ii,jj,kk,:)
++    call unpack_stf2(sv,sig); call unpack_stf2(rv,rr); call unpack_stf3(mv,mm)
++    do a=1,3; do b=1,3
++      gu(a,b)=dvel(ii,jj,kk,a,b)
++    enddo; enddo
++    gs=0.d0; gr=0.d0; gm=0.d0; gq=0.d0
++    do a=1,3
++      gs(a,1,1)=dsigmaxx(ii,jj,kk,a); gs(a,1,2)=dsigmaxy(ii,jj,kk,a)
++      gs(a,2,1)=gs(a,1,2); gs(a,1,3)=dsigmaxz(ii,jj,kk,a)
++      gs(a,3,1)=gs(a,1,3); gs(a,2,2)=dsigmayy(ii,jj,kk,a)
++      gs(a,2,3)=dsigmayz(ii,jj,kk,a); gs(a,3,2)=gs(a,2,3)
++      gs(a,3,3)=dsigmazz(ii,jj,kk,a)
++      gr(a,1,1)=dRij(ii,jj,kk,a,1); gr(a,1,2)=dRij(ii,jj,kk,a,2)
++      gr(a,2,1)=gr(a,1,2); gr(a,1,3)=dRij(ii,jj,kk,a,3)
++      gr(a,3,1)=gr(a,1,3); gr(a,2,2)=dRij(ii,jj,kk,a,4)
++      gr(a,2,3)=dRij(ii,jj,kk,a,5); gr(a,3,2)=gr(a,2,3)
++      gr(a,3,3)=dRij(ii,jj,kk,a,6)
++      gq(a,1)=dqx(ii,jj,kk,a); gq(a,2)=dqy(ii,jj,kk,a); gq(a,3)=dqz(ii,jj,kk,a)
++      gp(a)=dprs(ii,jj,kk,a); grt(a)=dtmp(ii,jj,kk,a)/const2
++    enddo
++    do a=1,3
++      call unpack_stf3(dmijk(ii,jj,kk,a,:),gm(a,:,:,:))
++    enddo
++    rtv=tmp(ii,jj,kk)/const2
++    do a=1,3
++      grho(a)=(gp(a)-rho(ii,jj,kk)*grt(a))/rtv
++    enddo
++  end subroutine load_local_tensors
++
++  subroutine r26_full_phi_closure()
++    use commvar,only: im,jm,km,const2
++    use commarray,only: rho,prs,tmp,miu
++    real(8),parameter::c1=2.097d0,c2=0.291d0
++    real(8)::sig(3,3),rr(3,3),mm(3,3,3),gu(3,3),gs(3,3,3)
++    real(8)::gq(3,3),gr(3,3,3),gm(3,3,3,3),gp(3),grho(3),grt(3)
++    real(8)::raw(3,3,3,3),s1(3,3,3,3),s2(3,3,3,3),s3(3,3,3,3),s4(3,3,3,3)
++    real(8)::s0(3,3,3,3),phi4(3,3,3,3),v(9),divs(3),rhov,pv,muv
++    integer::ii,jj,kk,a,b,c,d,e
++    do kk=0,km; do jj=0,jm; do ii=0,im
++      call load_local_tensors(ii,jj,kk,sig,rr,mm,gu,gs,gq,gr,gm,gp,grho,grt)
++      rhov=rho(ii,jj,kk); pv=prs(ii,jj,kk); muv=miu(ii,jj,kk)
++      do a=1,3
++        divs(a)=0.d0
++        do e=1,3; divs(a)=divs(a)+gs(e,a,e); enddo
++      enddo
++      raw=0.d0
++      do a=1,3; do b=1,3; do c=1,3; do d=1,3
++        raw(a,b,c,d)=gm(d,a,b,c)/rhov-mm(a,b,c)*grho(d)/(rhov*rhov)
++      enddo; enddo; enddo; enddo
++      call stf4_project(raw,s0)
++      do a=1,3; do b=1,3; do c=1,3; do d=1,3
++        raw(a,b,c,d)=sig(a,b)*gu(c,d)
++      enddo; enddo; enddo; enddo
++      call stf4_project(raw,s1)
++      do a=1,3; do b=1,3; do c=1,3; do d=1,3
++        raw(a,b,c,d)=mm(a,b,c)*divs(d)
++      enddo; enddo; enddo; enddo
++      call stf4_project(raw,s2)
++      do a=1,3; do b=1,3; do c=1,3; do d=1,3
++        raw(a,b,c,d)=rr(a,b)*gu(c,d)
++      enddo; enddo; enddo; enddo
++      call stf4_project(raw,s3)
++      do a=1,3; do b=1,3; do c=1,3; do d=1,3
++        raw(a,b,c,d)=sig(a,b)*sig(c,d)
++      enddo; enddo; enddo; enddo
++      call stf4_project(raw,s4)
++      phi4=-4.d0*muv/c1*s0-12.d0*muv/(c1*rhov)*s1 &
++           +4.d0*muv/(c1*pv*rhov)*s2-12.d0*muv/(7.d0*c1*pv)*s3 &
++           -c2/(c1*rhov)*s4
++      call pack_stf4(phi4,v); Eijkl(ii,jj,kk,:)=v
++    enddo; enddo; enddo
++  end subroutine r26_full_phi_closure
++
++  subroutine r26_full_psi_closure()
++    use commvar,only: im,jm,km,const2
++    use commarray,only: rho,prs,tmp,miu,qflux
++    real(8),parameter::y1=1.698d0,y2=1.203d0,y3=0.854d0
++    real(8)::sig(3,3),rr(3,3),mm(3,3,3),gu(3,3),gs(3,3,3)
++    real(8)::gq(3,3),gr(3,3,3),gm(3,3,3,3),gp(3),grho(3),grt(3)
++    real(8)::raw(3,3,3),s0(3,3,3),s1(3,3,3),s2(3,3,3),s3(3,3,3)
++    real(8)::s5(3,3,3),s6(3,3,3),s7(3,3,3),psi3(3,3,3),v(7)
++    real(8)::divs(3),q(3),divq,divu,sigu,rhov,pv,muv,rtv,scalar
++    integer::ii,jj,kk,a,b,c,d,e
++    do kk=0,km; do jj=0,jm; do ii=0,im
++      call load_local_tensors(ii,jj,kk,sig,rr,mm,gu,gs,gq,gr,gm,gp,grho,grt)
++      rhov=rho(ii,jj,kk); pv=prs(ii,jj,kk); muv=miu(ii,jj,kk); rtv=tmp(ii,jj,kk)/const2
++      q=qflux(ii,jj,kk,:); divq=0.d0; divu=0.d0; sigu=0.d0
++      do a=1,3
++        divs(a)=0.d0
++        do e=1,3; divs(a)=divs(a)+gs(e,a,e); enddo
++        divq=divq+gq(a,a); divu=divu+gu(a,a)
++        do b=1,3; sigu=sigu+sig(a,b)*gu(a,b); enddo
++      enddo
++      do a=1,3; do b=1,3; do c=1,3
++        raw(a,b,c)=gr(c,a,b)/rhov-rr(a,b)*grho(c)/(rhov*rhov)
++      enddo; enddo; enddo
++      call stf3_project(raw,s0)
++      do a=1,3; do b=1,3; do c=1,3
++        raw(a,b,c)=(rr(a,b)+7.d0*rtv*sig(a,b))*grt(c)
++      enddo; enddo; enddo
++      call stf3_project(raw,s1)
++      do a=1,3; do b=1,3; do c=1,3
++        raw(a,b,c)=q(a)*gu(b,c)
++      enddo; enddo; enddo
++      call stf3_project(raw,s2)
++      do a=1,3; do b=1,3; do c=1,3
++        raw(a,b,c)=rr(a,b)*divs(c)
++      enddo; enddo; enddo
++      call stf3_project(raw,s3)
++      scalar=divq+sigu
++      s5=0.d0
++      do a=1,3; do b=1,3; do c=1,3
++        do e=1,3
++          s5(a,b,c)=s5(a,b,c)+(54.d0/7.d0)*mm(e,a,b)*gu(e,c) &
++                    -6.d0*mm(a,b,e)*gu(c,e)
++        enddo
++        s5(a,b,c)=s5(a,b,c)+8.d0*mm(a,b,c)*divu
++      enddo; enddo; enddo
++      raw=s5; call stf3_project(raw,s5)
++      raw=0.d0
++      do a=1,3; do b=1,3; do c=1,3
++        do e=1,3; raw(a,b,c)=raw(a,b,c)+sig(e,a)*mm(b,c,e); enddo
++      enddo; enddo; enddo
++      call stf3_project(raw,s6)
++      do a=1,3; do b=1,3; do c=1,3
++        raw(a,b,c)=q(a)*sig(b,c)
++      enddo; enddo; enddo
++      call stf3_project(raw,s7)
++      psi3=-27.d0*muv/(7.d0*y1)*s0-27.d0*muv/(7.d0*y1*pv)*s1 &
++           -108.d0*muv/(5.d0*y1*rhov)*s2+27.d0*muv/(7.d0*y1*pv*rhov)*s3 &
++           +6.d0*muv*scalar/(y1*pv*rhov)*mm-muv/(y1*rhov)*s5 &
++           -y2/(y1*rhov)*s6+y3/(y1*rhov)*s7
++      call pack_stf3(psi3,v); psi(ii,jj,kk,:)=v
++    enddo; enddo; enddo
++  end subroutine r26_full_psi_closure
++
++  subroutine r26_full_omega_closure()
++    use commvar,only: im,jm,km,const2
++    use commarray,only: rho,prs,tmp,miu,qflux,dvel
++    real(8)::sig(3,3),rr(3,3),mm(3,3,3),gu(3,3),gs(3,3,3)
++    real(8)::gq(3,3),gr(3,3,3),gm(3,3,3,3),gp(3),grho(3),grt(3)
++    real(8)::q(3),divs(3),divrr(3),om(3),divq,sigu,rhov,pv,muv,rtv,delv
++    real(8)::t1,t2,t3,t4,t5,t6,t7,t8
++    integer::ii,jj,kk,a,b,c
++    do kk=0,km; do jj=0,jm; do ii=0,im
++      call load_local_tensors(ii,jj,kk,sig,rr,mm,gu,gs,gq,gr,gm,gp,grho,grt)
++      rhov=rho(ii,jj,kk); pv=prs(ii,jj,kk); muv=miu(ii,jj,kk); rtv=tmp(ii,jj,kk)/const2
++      delv=delta(ii,jj,kk); q=qflux(ii,jj,kk,:); divq=0.d0; sigu=0.d0
++      do a=1,3
++        divs(a)=0.d0; divrr(a)=0.d0
++        do b=1,3
++          divs(a)=divs(a)+gs(b,a,b)
++          divrr(a)=divrr(a)+gr(b,a,b)/rhov-rr(a,b)*grho(b)/(rhov*rhov)
++          sigu=sigu+sig(a,b)*gu(a,b)
++        enddo
++        divq=divq+gq(a,a)
++      enddo
++      do a=1,3
++        t1=-4.d0*muv*divrr(a)
++        t2=0.d0; t3=0.d0; t4=0.d0; t6=0.d0; t8=0.d0
++        do b=1,3
++          t2=t2+q(b)*(gu(a,b)+gu(b,a))
++          t4=t4+(2.d0*rtv*sig(a,b)+rr(a,b))*grt(b)
++          t6=t6+rr(a,b)*(gp(b)+divs(b))
++          t8=t8+14.d0*q(b)*sig(a,b)
++          do c=1,3
++            t3=t3+mm(a,b,c)*gu(b,c)
++            t8=t8+5.d0*mm(a,b,c)*sig(b,c)
++          enddo
++        enddo
++        t2=-56.d0*muv*t2/(5.d0*rhov)
++        t3=-8.d0*muv*t3/rhov
++        t4=-14.d0*muv*t4/pv
++        t5=56.d0*muv*q(a)*(divq+sigu)/(3.d0*pv*rhov)
++        t6=4.d0*muv*t6/(pv*rhov)
++        t7=7.d0*muv*delv*(divs(a)/rhov-2.d0*grt(a))/(3.d0*pv)
++        t8=-2.d0*t8/(15.d0*rhov)
++        om(a)=-7.d0*muv*(ddelta(ii,jj,kk,a)/rhov-delv*grho(a)/(rhov*rhov))/3.d0 &
++              +t1+t2+t3+t4+t5+t6+t7+t8
++      enddo
++      omega(ii,jj,kk,1:3)=om
++    enddo; enddo; enddo
++  end subroutine r26_full_omega_closure
++
++
+ end module methodmoment
+ !+---------------------------------------------------------------------+
+ !| The end of the module  methodmoment                                 |
