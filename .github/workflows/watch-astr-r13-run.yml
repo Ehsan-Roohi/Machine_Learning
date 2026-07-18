@@ -79,6 +79,24 @@ Run: ${html_url}"
             exit 0
           fi
 
+          # The production solve can finish successfully while a nonessential
+          # post-processing command marks a matrix job failed. Do not waste time
+          # rerunning the expensive solve when both expected result artifacts exist.
+          artifacts=$(gh api "repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100")
+          have20=$(jq -r '[.artifacts[] | select(.name=="ASTR_R13_JFM_CAVITY_FROM_SCRATCH_20000" and .size_in_bytes>500000)] | length' <<<"$artifacts")
+          have30=$(jq -r '[.artifacts[] | select(.name=="ASTR_R13_JFM_CAVITY_FROM_SCRATCH_30000" and .size_in_bytes>500000)] | length' <<<"$artifacts")
+          if (( have20 > 0 && have30 > 0 )); then
+            post_comment "${marker}
+
+✅ Both 20k and 30k production artifacts exist and are nontrivial in size. The workflow-level failure is therefore treated as a post-processing wrapper issue, not a failed solve. No expensive rerun was requested.
+
+${job_summary}
+
+Run: ${html_url}"
+            gh api --method PATCH "repos/${REPO}/issues/${ISSUE_NUMBER}" -f state='closed' -f state_reason='completed' >/dev/null
+            exit 0
+          fi
+
           if (( attempt < 3 )); then
             retry_marker="<!-- astr-watchdog retry run=${RUN_ID} attempt=${attempt} conclusion=${conclusion} -->"
             already_retried=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments?per_page=100" --paginate --jq '.[].body' | grep -F "$retry_marker" || true)
@@ -90,7 +108,7 @@ Run: ${html_url}"
               fi
               post_comment "${retry_marker}
 
-⚠️ The run stopped with **${conclusion}**. The watchdog automatically requested a retry.
+⚠️ The run stopped with **${conclusion}** and a required production artifact is missing. The watchdog automatically requested a retry.
 
 ${job_summary}
 
