@@ -14,11 +14,15 @@ import numpy as np
 BASE_MACH_U100 = 0.3099878865960759
 BASE_RE_U100 = 10.031341886555307
 GAMMA = 5.0 / 3.0
+MAX_ASTR_TOKEN_LENGTH = 16
 
 
 def fortran_double(value: float) -> str:
-    """Return a real literal compatible with ASTR's legacy string parser."""
-    return f"{value:.16e}".replace("e", "d")
+    """Return a compact literal that survives ASTR's character(len=16) parser."""
+    token = f"{value:.8e}".replace("e", "d")
+    if len(token) > MAX_ASTR_TOKEN_LENGTH:
+        raise RuntimeError(f"ASTR numeric token exceeds 16 characters: {token}")
+    return token
 
 
 def replace_value_after_comment(lines: list[str], prefix: str, value: str) -> None:
@@ -31,10 +35,20 @@ def replace_value_after_comment(lines: list[str], prefix: str, value: str) -> No
     raise RuntimeError(f"Comment prefix not found: {prefix}")
 
 
-def assert_no_e_exponents(text: str, path: Path) -> None:
-    bad = re.findall(r"(?i)(?<![A-Za-z])[-+]?\d+(?:\.\d*)?[e][+-]?\d+", text)
-    if bad:
-        raise RuntimeError(f"E-notation is unsafe for ASTR in {path}: {bad}")
+def assert_safe_numeric_tokens(text: str, path: Path) -> None:
+    bad_e = re.findall(r"(?i)(?<![A-Za-z])[-+]?\d+(?:\.\d*)?[e][+-]?\d+", text)
+    if bad_e:
+        raise RuntimeError(f"E-notation is unsafe for ASTR in {path}: {bad_e}")
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        for raw in line.split(","):
+            token = raw.strip()
+            if re.fullmatch(r"[-+]?\d+(?:\.\d*)?(?:[dD][+-]?\d+)?", token):
+                if len(token) > MAX_ASTR_TOKEN_LENGTH:
+                    raise RuntimeError(
+                        f"ASTR token is truncated by character(len=16) in {path}: {token}"
+                    )
 
 
 def main() -> None:
@@ -98,7 +112,7 @@ def main() -> None:
     replace_value_after_comment(input_lines, "# turbmode,iomode, moment", "none,h,r26")
     replace_value_after_comment(input_lines, "# ninit", "0")
     input_text = "\n".join(input_lines) + "\n"
-    assert_no_e_exponents(input_text, input_path)
+    assert_safe_numeric_tokens(input_text, input_path)
     input_path.write_text(input_text, encoding="utf-8")
 
     controller_lines = controller_path.read_text(encoding="utf-8").splitlines()
@@ -110,7 +124,7 @@ def main() -> None:
     )
     replace_value_after_comment(controller_lines, "# deltat", fortran_double(args.dt))
     controller_text = "\n".join(controller_lines) + "\n"
-    assert_no_e_exponents(controller_text, controller_path)
+    assert_safe_numeric_tokens(controller_text, controller_path)
     controller_path.write_text(controller_text, encoding="utf-8")
 
     coordinates = np.linspace(0.0, 1.0, args.cells + 1, dtype=np.float64)
@@ -150,7 +164,7 @@ def main() -> None:
         "maxstep": args.maxstep,
         "moment_model": "r26",
         "wall_start": "full lid speed from step 0 (Stage-1 source patch)",
-        "number_format": "Fortran D exponent required by ASTR parser",
+        "number_format": "compact Fortran D exponent, maximum token length 16",
         "collision_coefficients": "Maxwell molecules, Stage-1 Apsi1 correction",
         "nonlinear_R26_blocks": "retained disabled",
     }
