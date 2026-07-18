@@ -1,1 +1,1 @@
-Trigger patched ASTR nonlinear R13 JFM cavity run with asserted source and CRLF-safe input edits.
+Trigger ASTR nonlinear R13 JFM cavity with consistent slow lid ramp to full speed.
