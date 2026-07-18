@@ -1,0 +1,1 @@
+Continue the validated semi-linear R26 32x32 U=100 m/s cavity from step 20000 to explicit checkpoints at steps 40000 and 50000 by 2000-step intervals, preserving validation and DSMC/R13 comparisons.
