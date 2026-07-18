@@ -1,0 +1,161 @@
+name: Run ASTR R13 from scratch 20k and 30k
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'run-astr-r13-from-scratch-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  run-r13:
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        maxstep: [20000, 30000]
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran cmake make openmpi-bin libopenmpi-dev libhdf5-openmpi-dev unzip zip python3-h5py python3-numpy
+
+      - name: Download verified 10000-step source bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: base_artifact
+
+      - name: Restore exact source and input, but discard old solution
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INNER=$(find base_artifact -type f -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          test -n "$INNER"
+          mkdir -p base
+          unzip -q "$INNER" -d base
+          test -d base/astr
+          test -d base/case
+          cp -a base/astr ./astr
+          cp -a base/case ./case
+
+          rm -rf astr/build
+          rm -rf case/outdat case/bakup case/testout case/monitor case/islice case/jslice case/kslice
+          rm -f case/flowstate.dat case/time_report.* case/errnode.log case/*.log
+          mkdir -p case/outdat case/bakup
+
+          python3 - <<'PY'
+          from pathlib import Path
+          maxstep = int('${{ matrix.maxstep }}')
+
+          p = Path('case/datin/input.astr_r13_jfm')
+          lines = p.read_text().splitlines()
+          for i, line in enumerate(lines):
+              if line.strip().startswith('# lrestar'):
+                  lines[i+1] = 'f'
+          p.write_text('\n'.join(lines) + '\n')
+
+          p = Path('case/datin/controller')
+          lines = p.read_text().splitlines()
+          for i, line in enumerate(lines):
+              if line.strip().startswith('# lwsequ'):
+                  lines[i+1] = '       f,     f,   f,      f'
+              if line.strip().startswith('# maxstep'):
+                  lines[i+1] = f'{maxstep:9d},   10000,   10000,    1000,    1000,  1000'
+          p.write_text('\n'.join(lines) + '\n')
+          PY
+
+          grep -A2 -n '# lrestar' case/datin/input.astr_r13_jfm
+          grep -A2 -n '# maxstep' case/datin/controller
+          cp case/datin/input.astr_r13_jfm input_used_${{ matrix.maxstep }}.txt
+          cp case/datin/controller controller_used_${{ matrix.maxstep }}.txt
+
+      - name: Rebuild exact ASTR mom_merge source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build -j 2
+          test -x astr/build/bin/astr
+
+      - name: Run nonlinear R13 cavity from equilibrium to ${{ matrix.maxstep }}
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd case
+          /usr/bin/time -v mpirun -np 4 ../astr/build/bin/astr run datin/input.astr_r13_jfm > ../run_${{ matrix.maxstep }}.log 2> ../time_${{ matrix.maxstep }}.log
+          cd ..
+
+      - name: Validate and summarize result
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import h5py, json, numpy as np
+          from pathlib import Path
+
+          target = int('${{ matrix.maxstep }}')
+          path = Path('case/outdat/flowfield.h5')
+          assert path.is_file() and path.stat().st_size > 0
+
+          with h5py.File(path, 'r') as h:
+              nstep = int(h['nstep'][0])
+              time = float(h['time'][0])
+              summary = {'target_step': target, 'nstep': nstep, 'time': time, 'fields': {}}
+              assert nstep >= target, (nstep, target)
+              for key in ['ro','p','t','u1','u2','qx','qy','Rxx','Rxy','Ryy','Delta']:
+                  a = np.asarray(h[key], dtype=float)
+                  finite = bool(np.isfinite(a).all())
+                  assert finite, key
+                  summary['fields'][key] = {
+                      'min': float(a.min()),
+                      'max': float(a.max()),
+                      'mean': float(a.mean()),
+                      'rms': float(np.sqrt(np.mean(a*a))),
+                      'finite': finite,
+                  }
+          Path(f'summary_{target}.json').write_text(json.dumps(summary, indent=2))
+          print(json.dumps(summary, indent=2))
+          PY
+
+          h5ls -r case/outdat/flowfield.h5 > hdf5_inventory_${{ matrix.maxstep }}.txt
+          tail -n 120 run_${{ matrix.maxstep }}.log > run_${{ matrix.maxstep }}_tail.txt
+
+      - name: Package result
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=ASTR_R13_JFM_CAVITY_FROM_SCRATCH_${{ matrix.maxstep }}
+          mkdir -p "$ROOT"
+          cp -a case/datin "$ROOT/input"
+          cp -a case/outdat "$ROOT/outdat" || true
+          cp -a case/bakup "$ROOT/bakup" || true
+          cp input_used_${{ matrix.maxstep }}.txt controller_used_${{ matrix.maxstep }}.txt "$ROOT/" || true
+          cp run_${{ matrix.maxstep }}.log time_${{ matrix.maxstep }}.log "$ROOT/" || true
+          cp summary_${{ matrix.maxstep }}.json hdf5_inventory_${{ matrix.maxstep }}.txt run_${{ matrix.maxstep }}_tail.txt "$ROOT/" || true
+          git -C astr rev-parse HEAD > "$ROOT/ASTR_SOURCE_COMMIT.txt" || true
+          git -C astr diff > "$ROOT/ASTR_SOURCE_PATCH.diff" || true
+          zip -r -9 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_R13_JFM_CAVITY_FROM_SCRATCH_${{ matrix.maxstep }}
+          path: |
+            ASTR_R13_JFM_CAVITY_FROM_SCRATCH_${{ matrix.maxstep }}.zip
+            ASTR_R13_JFM_CAVITY_FROM_SCRATCH_${{ matrix.maxstep }}.zip.sha256
+          compression-level: 0
+          retention-days: 7
