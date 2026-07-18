@@ -1,0 +1,1 @@
+Start the conservative audited R26 Stage-1 cavity workflow for equilibrium, U=10 m/s sanity, U=100 m/s pilot, and 64x64 production comparison.
