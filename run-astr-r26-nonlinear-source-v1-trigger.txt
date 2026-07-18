@@ -1,1 +1,1 @@
-Enable the existing Gu-Emerson nonlinear evolution-source blocks M_ijk, S_ij and N, run smoke tests, and continue the 32x32 U=100 m/s cavity to step 10000 by 2000-step intervals.
+Enable Gu-Emerson nonlinear evolution-source blocks M_ijk, S_ij and N, rerun smoke tests and the 32x32 U=100 m/s cavity to step 10000, and package the complete artifact with the corrected code directory handling.
