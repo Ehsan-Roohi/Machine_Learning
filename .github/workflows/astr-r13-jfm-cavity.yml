@@ -1,0 +1,146 @@
+name: Run ASTR nonlinear R13 JFM cavity
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'trigger-astr-r13-production.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  run-astr-r13:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 175
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and libraries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gfortran cmake make git openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev hdf5-tools python3 python3-numpy python3-matplotlib zip
+
+      - name: Clone and build ASTR mom_merge
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf work
+          mkdir -p work/results
+          git clone --depth 1 --branch mom_merge https://github.com/astr-code/astr.git work/astr
+          cd work/astr
+          git rev-parse HEAD | tee ../results/ASTR_commit.txt
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
+            -DCMAKE_Fortran_COMPILER=mpifort 2>&1 | tee ../results/cmake_configure.log
+          cmake --build build --parallel 2 2>&1 | tee ../results/cmake_build.log
+          test -x build/bin/astr
+
+      - name: Prepare nonlinear R13 JFM cavity case
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p work/case/datin
+          cp work/astr/examples/Lid-Driven-Cavity-Rarefied/datin/input.ldcav2d work/case/datin/input.astr_r13_jfm
+          cp work/astr/examples/Lid-Driven-Cavity-Rarefied/datin/controller work/case/datin/controller
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('work/case/datin/input.astr_r13_jfm')
+          s=p.read_text()
+          s=s.replace('64,64,0','64,64,0')
+          s=s.replace('273.0d0, 2.629, 0.1625d0, 1.66667d0',
+                      '300.0d0, 10.031341886555307d0, 0.3099878865960759d0, 1.6666666666666667d0')
+          s=s.replace('none,h,r26','none,h,r13')
+          p.write_text(s)
+          c=Path('work/case/datin/controller')
+          cs=c.read_text()
+          cs=cs.replace('      100,     100,     100,      50,      10,    50',
+                        '    10000,   10000,   10000,    1000,    1000,  1000')
+          cs=cs.replace('1.d-4','1.d-4')
+          c.write_text(cs)
+          PY
+          cp work/case/datin/input.astr_r13_jfm work/results/
+          cp work/case/datin/controller work/results/controller_used
+          cat > work/results/CASE_PARAMETERS.txt <<'EOF'
+          ASTR branch: mom_merge
+          Model: nonlinear time-dependent R13
+          Geometry: 2-D square lid-driven cavity, 64x64
+          Gas interpretation: monatomic argon
+          T_ref = T_wall = 300 K
+          U_lid = 100 m/s
+          gamma = 5/3
+          Mach = 0.3099878865960759
+          Kn = Mach/Re*sqrt(gamma*pi/2) = 0.05
+          Reynolds supplied to ASTR = 10.031341886555307
+          Moment model = r13
+          Accommodation coefficient hard-coded in wall BC = 1.0 diffuse
+          Time step = 1e-4 nondimensional
+          Max steps = 10000
+          Lid ramp in source: U_wall=min(10*nstep*dt,1), reaches full speed at step 1000
+          EOF
+
+      - name: Run bundled cavity sanity test
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p work/sanity/datin
+          cp work/astr/examples/Lid-Driven-Cavity-Rarefied/datin/* work/sanity/datin/
+          cd work/sanity
+          set +e
+          timeout 900 mpirun --allow-run-as-root --oversubscribe -np 4 ../astr/build/bin/astr run datin/input.ldcav2d \
+            > ../results/sanity_stdout.log 2> ../results/sanity_stderr.log
+          RC=$?
+          set -e
+          echo "$RC" > ../results/sanity_exit_code.txt
+          find . -maxdepth 4 -type f -printf '%p %s bytes\n' | sort > ../results/sanity_files.txt
+          test "$RC" -eq 0
+
+      - name: Run nonlinear R13 JFM cavity
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd work/case
+          /usr/bin/time -v timeout 9000 mpirun --allow-run-as-root --oversubscribe -np 4 \
+            ../astr/build/bin/astr run datin/input.astr_r13_jfm \
+            > ../results/r13_stdout.log 2> ../results/r13_stderr_and_time.log
+          RC=$?
+          echo "$RC" > ../results/r13_exit_code.txt
+          find . -type f -printf '%p %s bytes\n' | sort > ../results/r13_output_files.txt
+          cp -a . ../results/case_after_run
+          test "$RC" -eq 0
+
+      - name: Inspect HDF5 output
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          find work/case -type f \( -name '*.h5' -o -name '*.hdf5' \) -print | sort > work/results/hdf5_files.txt || true
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            echo "===== $f =====" >> work/results/hdf5_inventory.txt
+            h5ls -r "$f" >> work/results/hdf5_inventory.txt 2>&1 || true
+          done < work/results/hdf5_files.txt
+
+      - name: Package source and results
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd work
+          rm -rf astr/.git astr/build/CMakeFiles
+          zip -r -6 ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip astr results case
+          sha256sum ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip > ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip.sha256
+          test -s ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip
+
+      - name: Upload ASTR nonlinear R13 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          path: |
+            work/ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip
+            work/ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip.sha256
+          compression-level: 0
+          retention-days: 7
