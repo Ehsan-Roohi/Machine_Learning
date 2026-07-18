@@ -1,0 +1,1 @@
+Continue the successful ASTR nonlinear R13 cavity checkpoint from step 10000 to steps 20000 and 30000, preserving both checkpoints and convergence diagnostics.
