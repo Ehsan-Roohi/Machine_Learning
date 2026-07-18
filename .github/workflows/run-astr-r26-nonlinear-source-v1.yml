@@ -1,0 +1,246 @@
+name: Run ASTR R26 nonlinear-source v1
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'run-astr-r26-nonlinear-source-v1-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: astr-r26-nonlinear-source-v1-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nonlinear-source-v1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and analysis libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran cmake make openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev unzip zip \
+            python3-h5py python3-numpy python3-scipy python3-matplotlib python3-pandas
+
+      - name: Download verified ASTR source and cavity template
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: source_artifact
+
+      - name: Download semi-linear R26 10k reference
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_R26_STAGE1_32X32_LADDER_2K_TO_10K
+          run-id: 29653170046
+          github-token: ${{ github.token }}
+          path: semi_artifact
+
+      - name: Download validated R13 40k reference
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000
+          run-id: 29647840498
+          github-token: ${{ github.token }}
+          path: r13_artifact
+
+      - name: Restore sources and reference cases
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SOURCE_INNER=$(find source_artifact -type f -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          mkdir source_restored
+          unzip -q "$SOURCE_INNER" -d source_restored
+          cp -a source_restored/astr ./astr
+          cp -a source_restored/case ./template_case
+          rm -rf astr/build
+
+          SEMI_INNER=$(find semi_artifact -type f -name 'ASTR_R26_STAGE1_32X32_LADDER_2K_TO_10K.zip' -print -quit)
+          mkdir semi_restored
+          unzip -q "$SEMI_INNER" -d semi_restored
+          SEMI_ROOT=$(find semi_restored -type d -name 'ASTR_R26_STAGE1_32X32_LADDER_2K_TO_10K' -print -quit)
+          cp -a "$SEMI_ROOT/final_case" ./semi_r26_10k
+          cp -a "$SEMI_ROOT/comparison" ./semi_comparison_10k
+
+          R13_INNER=$(find r13_artifact -type f -name 'ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000.zip' -print -quit)
+          mkdir r13_restored
+          unzip -q "$R13_INNER" -d r13_restored
+          R13_ROOT=$(find r13_restored -type d -name 'ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000' -print -quit)
+          cp -a "$R13_ROOT" ./r13_40k
+          cp -a r13_40k/input r13_40k/datin
+
+      - name: Apply Stage-1 corrections and enable nonlinear evolution sources
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 astr_r26_stage1/patch_r26_stage1.py astr \
+            --report r26_stage1_source_audit.json \
+            --patch-output ASTR_R26_STAGE1.patch
+          python3 astr_r26_stage2/patch_r26_nonlinear_sources.py astr \
+            --report r26_nonlinear_source_v1_audit.json \
+            --patch-output ASTR_R26_NONLINEAR_SOURCE_V1.patch
+          grep -n -C2 'nonlinear source enabled' astr/src/methodmoment.F90
+          python3 - <<'PY'
+          import json
+          a=json.load(open('r26_nonlinear_source_v1_audit.json'))
+          assert len(a['enabled_evolution_terms']) == 3
+          assert len(a['deliberately_disabled_blocks_remaining']) == 2
+          PY
+
+      - name: Build nonlinear-source R26
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build -j 2
+          test -x astr/build/bin/astr
+
+      - name: Prepare smoke and 32x32 production-pilot cases
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p cases checkpoints summaries convergence logs comparison
+          python3 astr_r26_stage1/make_r26_cavity_case.py \
+            --template-case template_case --output cases/u10_16_100 \
+            --cells 16 --lid-speed-ms 10 --dt 1e-4 --maxstep 100 --checkpoint-every 50
+          python3 astr_r26_stage1/make_r26_cavity_case.py \
+            --template-case template_case --output cases/u100_16_200 \
+            --cells 16 --lid-speed-ms 100 --dt 2.5e-5 --maxstep 200 --checkpoint-every 100
+          python3 astr_r26_stage1/make_r26_cavity_case.py \
+            --template-case template_case --output cases/u100_32 \
+            --cells 32 --lid-speed-ms 100 --dt 2.5e-5 --maxstep 2000 --checkpoint-every 2000
+
+      - name: Run nonlinear-source U10 smoke test
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INPUT=$(basename "$(find cases/u10_16_100/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+          (cd cases/u10_16_100 && /usr/bin/time -v mpirun --oversubscribe -np 4 ../../astr/build/bin/astr run "datin/${INPUT}" > ../../logs/u10_smoke.log 2> ../../logs/u10_smoke_time.log)
+          ! grep -q 'COMPUTATION CRASHED' logs/u10_smoke.log
+          python3 astr_r26_stage1/validate_r26_case.py cases/u10_16_100 --target-step 100 --output summaries/u10_smoke.json
+
+      - name: Run nonlinear-source U100 smoke test
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INPUT=$(basename "$(find cases/u100_16_200/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+          (cd cases/u100_16_200 && /usr/bin/time -v mpirun --oversubscribe -np 4 ../../astr/build/bin/astr run "datin/${INPUT}" > ../../logs/u100_smoke.log 2> ../../logs/u100_smoke_time.log)
+          ! grep -q 'COMPUTATION CRASHED' logs/u100_smoke.log
+          python3 astr_r26_stage1/validate_r26_case.py cases/u100_16_200 --target-step 200 --output summaries/u100_smoke.json
+
+      - name: Run nonlinear-source 32x32 from 0 to 2000
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INPUT=$(basename "$(find cases/u100_32/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+          (cd cases/u100_32 && /usr/bin/time -v mpirun --oversubscribe -np 4 ../../astr/build/bin/astr run "datin/${INPUT}" > ../../logs/step_02000.log 2> ../../logs/step_02000_time.log)
+          ! grep -q 'COMPUTATION CRASHED' logs/step_02000.log
+          python3 astr_r26_stage1/validate_r26_case.py cases/u100_32 --target-step 2000 --output summaries/step_02000.json
+          mkdir checkpoints/step_02000
+          cp cases/u100_32/outdat/flowfield.h5 cases/u100_32/outdat/auxiliary.h5 checkpoints/step_02000/
+          python3 - <<'PY'
+          from pathlib import Path
+          p=next((Path('cases/u100_32/datin')).glob('input.astr*'))
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# lrestar'):
+                  lines[i+1]='t'; break
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+
+      - name: Continue nonlinear-source R26 to 10k by 2k
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INPUT=$(basename "$(find cases/u100_32/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+          PREVIOUS=2000
+          for TARGET in 4000 6000 8000 10000; do
+            python3 - "$TARGET" <<'PY'
+          import sys
+          from pathlib import Path
+          target=int(sys.argv[1]); p=Path('cases/u100_32/datin/controller')
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# maxstep,feqchkpt'):
+                  lines[i+1]=f"{target:9d},    2000,    2000,     500,     200,   200"; break
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+            LABEL=$(printf 'step_%05d' "$TARGET")
+            (cd cases/u100_32 && /usr/bin/time -v mpirun --oversubscribe -np 4 ../../astr/build/bin/astr run "datin/${INPUT}" > "../../logs/${LABEL}.log" 2> "../../logs/${LABEL}_time.log")
+            ! grep -q 'COMPUTATION CRASHED' "logs/${LABEL}.log"
+            python3 astr_r26_stage1/validate_r26_case.py cases/u100_32 --target-step "$TARGET" --output "summaries/${LABEL}.json"
+            PREV_LABEL=$(printf 'step_%05d' "$PREVIOUS")
+            python3 astr_r26_stage2/checkpoint_convergence.py \
+              --previous "checkpoints/${PREV_LABEL}/flowfield.h5" \
+              --current cases/u100_32/outdat/flowfield.h5 \
+              --output "convergence/${PREV_LABEL}_to_${LABEL}.json"
+            mkdir "checkpoints/${LABEL}"
+            cp cases/u100_32/outdat/flowfield.h5 cases/u100_32/outdat/auxiliary.h5 "checkpoints/${LABEL}/"
+            PREVIOUS=$TARGET
+          done
+
+      - name: Compare nonlinear-source, semi-linear, R13 and DSMC
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 astr_r26_stage1/compare_r26_r13_dsmc.py \
+            --r26-case cases/u100_32 --r13-case r13_40k --output comparison/nonlinear_vs_r13_dsmc
+          cp -a semi_comparison_10k comparison/semi_linear_10k_reference
+          python3 - <<'PY'
+          import json
+          import pandas as pd
+          from pathlib import Path
+          non=pd.read_csv('comparison/nonlinear_vs_r13_dsmc/r26_r13_dsmc_metrics.csv')
+          semi=pd.read_csv('comparison/semi_linear_10k_reference/r26_r13_dsmc_metrics.csv')
+          out=non[['metric','DSMC','R13','R26_stage1']].rename(columns={'R26_stage1':'R26_nonlinear_source_10k'})
+          out['R26_semi_linear_10k']=semi['R26_stage1']
+          out['nonlinear_abs_error']=abs(out['R26_nonlinear_source_10k']-out['DSMC'])
+          out['semi_linear_abs_error']=abs(out['R26_semi_linear_10k']-out['DSMC'])
+          out['better_R26_path_at_10k']=out.apply(lambda r:'nonlinear-source' if r.nonlinear_abs_error < r.semi_linear_abs_error else 'semi-linear',axis=1)
+          out.to_csv('comparison/nonlinear_vs_semilinear_10k.csv',index=False)
+          summary={
+              'model':'Audited Maxwell R26 nonlinear-source v1',
+              'final_step':10000,
+              'time_star':0.25,
+              'comparison_table':'nonlinear_vs_semilinear_10k.csv',
+              'warning':'Evolution nonlinear sources enabled; nonlinear regularization remainders and wall audit remain incomplete.'
+          }
+          Path('comparison/nonlinear_source_v1_summary.json').write_text(json.dumps(summary,indent=2))
+          print(out.to_string(index=False))
+          PY
+
+      - name: Package nonlinear-source v1 result
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=ASTR_R26_NONLINEAR_SOURCE_V1_32X32_TO_10K
+          mkdir -p "$ROOT"
+          cp -a checkpoints convergence summaries logs comparison "$ROOT/" || true
+          cp -a cases/u100_32 "$ROOT/final_case" || true
+          cp -a astr/src "$ROOT/patched_source_src" || true
+          cp ASTR_R26_STAGE1.patch ASTR_R26_NONLINEAR_SOURCE_V1.patch r26_stage1_source_audit.json r26_nonlinear_source_v1_audit.json "$ROOT/" || true
+          cp -a astr_r26_stage1 astr_r26_stage2 "$ROOT/code"
+          zip -r -9 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload nonlinear-source v1 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_R26_NONLINEAR_SOURCE_V1_32X32_TO_10K
+          path: |
+            ASTR_R26_NONLINEAR_SOURCE_V1_32X32_TO_10K.zip
+            ASTR_R26_NONLINEAR_SOURCE_V1_32X32_TO_10K.zip.sha256
+          compression-level: 0
+          retention-days: 7
