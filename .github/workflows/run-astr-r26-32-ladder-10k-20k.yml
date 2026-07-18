@@ -1,0 +1,170 @@
+name: Continue ASTR R26 32x32 from 10k to 20k by 2k
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'run-astr-r26-10k-20k-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: astr-r26-10k-20k-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  r26-10k-20k:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and analysis libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran cmake make openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev unzip zip \
+            python3-h5py python3-numpy python3-scipy python3-matplotlib python3-pandas
+
+      - name: Download verified ASTR source bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: source_artifact
+
+      - name: Download validated R26 10k ladder artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_R26_STAGE1_32X32_LADDER_2K_TO_10K
+          run-id: 29653170046
+          github-token: ${{ github.token }}
+          path: r26_artifact
+
+      - name: Download validated R13 40k reference
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000
+          run-id: 29647840498
+          github-token: ${{ github.token }}
+          path: r13_artifact
+
+      - name: Restore source, R26 10k checkpoint, and R13 reference
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SOURCE_INNER=$(find source_artifact -type f -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          test -n "$SOURCE_INNER"
+          mkdir source_restored
+          unzip -q "$SOURCE_INNER" -d source_restored
+          cp -a source_restored/astr ./astr
+          rm -rf astr/build
+
+          R26_INNER=$(find r26_artifact -type f -name 'ASTR_R26_STAGE1_32X32_LADDER_2K_TO_10K.zip' -print -quit)
+          test -n "$R26_INNER"
+          mkdir r26_restored
+          unzip -q "$R26_INNER" -d r26_restored
+          R26_ROOT=$(find r26_restored -type d -name 'ASTR_R26_STAGE1_32X32_LADDER_2K_TO_10K' -print -quit)
+          test -n "$R26_ROOT"
+          cp -a "$R26_ROOT/final_case" ./r26_case
+          mkdir -p checkpoints summaries convergence logs comparison
+          cp -a "$R26_ROOT/checkpoints/step_10000" checkpoints/step_10000
+
+          R13_INNER=$(find r13_artifact -type f -name 'ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000.zip' -print -quit)
+          test -n "$R13_INNER"
+          mkdir r13_restored
+          unzip -q "$R13_INNER" -d r13_restored
+          R13_ROOT=$(find r13_restored -type d -name 'ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000' -print -quit)
+          test -n "$R13_ROOT"
+          cp -a "$R13_ROOT" ./r13_40k
+          cp -a r13_40k/input r13_40k/datin
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import h5py
+          p=next((Path('r26_case')/'datin').glob('input.astr*'))
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# lrestar'):
+                  lines[i+1]='t'; break
+          else:
+              raise RuntimeError('lrestar not found')
+          p.write_text('\n'.join(lines)+'\n')
+          with h5py.File('r26_case/outdat/flowfield.h5','r') as h:
+              assert int(h['nstep'][0]) == 10000
+          PY
+
+      - name: Apply audited R26 Stage-1 patch and build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 astr_r26_stage1/patch_r26_stage1.py astr \
+            --report r26_stage1_source_audit.json \
+            --patch-output ASTR_R26_STAGE1.patch
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build -j 2
+          test -x astr/build/bin/astr
+          chmod +x astr_r26_stage1/run_r26_restart_segment.sh
+
+      - name: Continue R26 10k to 12k
+        run: bash astr_r26_stage1/run_r26_restart_segment.sh 12000 10000 r26_case ../astr/build/bin/astr
+
+      - name: Continue R26 12k to 14k
+        run: bash astr_r26_stage1/run_r26_restart_segment.sh 14000 12000 r26_case ../astr/build/bin/astr
+
+      - name: Continue R26 14k to 16k
+        run: bash astr_r26_stage1/run_r26_restart_segment.sh 16000 14000 r26_case ../astr/build/bin/astr
+
+      - name: Continue R26 16k to 18k
+        run: bash astr_r26_stage1/run_r26_restart_segment.sh 18000 16000 r26_case ../astr/build/bin/astr
+
+      - name: Continue R26 18k to 20k
+        run: bash astr_r26_stage1/run_r26_restart_segment.sh 20000 18000 r26_case ../astr/build/bin/astr
+
+      - name: Build convergence summary and R26/R13/DSMC comparison
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          rows=[]
+          for p in sorted(Path('convergence').glob('step_*_to_step_*.json')):
+              d=json.loads(p.read_text())
+              rows.append({'previous_step':d['previous_step'],'current_step':d['current_step'],**d['relative_RMS_change_percent']})
+          Path('convergence/r26_10k_20k_ladder.json').write_text(json.dumps(rows,indent=2))
+          print(json.dumps(rows,indent=2))
+          PY
+          python3 astr_r26_stage1/compare_r26_r13_dsmc.py \
+            --r26-case r26_case --r13-case r13_40k --output comparison
+
+      - name: Package complete R26 10k-to-20k ladder
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=ASTR_R26_STAGE1_32X32_LADDER_10K_TO_20K
+          mkdir -p "$ROOT"
+          cp -a astr_r26_stage1 "$ROOT/code"
+          cp ASTR_R26_STAGE1.patch r26_stage1_source_audit.json "$ROOT/" || true
+          cp -a checkpoints summaries convergence logs comparison "$ROOT/" || true
+          cp -a r26_case "$ROOT/final_case" || true
+          cp -a astr/src "$ROOT/patched_source_src"
+          zip -r -9 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload R26 10k-to-20k ladder artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_R26_STAGE1_32X32_LADDER_10K_TO_20K
+          path: |
+            ASTR_R26_STAGE1_32X32_LADDER_10K_TO_20K.zip
+            ASTR_R26_STAGE1_32X32_LADDER_10K_TO_20K.zip.sha256
+          compression-level: 0
+          retention-days: 7
