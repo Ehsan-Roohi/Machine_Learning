@@ -25,13 +25,22 @@ jobs:
             openmpi-bin libopenmpi-dev libhdf5-openmpi-dev hdf5-tools \
             python3 python3-numpy python3-h5py
 
-      - name: Build ASTR mom_merge
+      - name: Clone, patch, and build ASTR mom_merge
         run: |
           set -euxo pipefail
           rm -rf work results
-          mkdir -p work results/logs
+          mkdir -p work results/logs results/patched_source_files
           git clone --depth 1 --branch mom_merge https://github.com/astr-code/astr.git work/astr
           git -C work/astr rev-parse HEAD | tee results/ASTR_MOM_MERGE_COMMIT.txt
+
+          before=$(grep -c 'uwall = dble(nstep)\*deltat$' work/astr/src/methodmoment.F90)
+          test "$before" -eq 2
+          sed -i 's/uwall = dble(nstep)\*deltat$/uwall = dble(nstep)*deltat*10.0d0/' work/astr/src/methodmoment.F90
+          after=$(grep -c 'uwall = dble(nstep)\*deltat\*10.0d0$' work/astr/src/methodmoment.F90)
+          test "$after" -eq 2
+          git -C work/astr diff -- src/methodmoment.F90 | tee results/ASTR_R13_LID_RAMP_CONSISTENCY.patch
+          cp work/astr/src/methodmoment.F90 results/patched_source_files/methodmoment.F90
+
           cmake -S work/astr -B work/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_Fortran_COMPILER=mpifort \
@@ -47,8 +56,8 @@ jobs:
           cp -a work/astr/examples/Lid-Driven-Cavity-Rarefied/datin work/case/
           sed -i 's/273.0d0, 2.629, 0.1625d0, 1.66667d0/300.d0,10.03136d0,0.309988d0,1.666667d0/' work/case/datin/input.ldcav2d
           sed -i 's/none,h,r26/none,h,r13/' work/case/datin/input.ldcav2d
-          sed -i -E 's/^([[:space:]]*)100,[[:space:]]*100,[[:space:]]*100,[[:space:]]*50,[[:space:]]*10,[[:space:]]*50/     6000,    1000,    1000,    1000,     100,  1000/' work/case/datin/controller
-          sed -i 's/^1.d-4$/2.5d-5/' work/case/datin/controller
+          sed -i -E 's/^([[:space:]]*)100,[[:space:]]*100,[[:space:]]*100,[[:space:]]*50,[[:space:]]*10,[[:space:]]*50/     4000,     500,     500,     500,     100,   500/' work/case/datin/controller
+          sed -i 's/^1.d-4$/5.d-5/' work/case/datin/controller
           cat > results/CASE_METADATA.txt <<'EOF'
           Gas: monatomic argon
           T_wall = 300 K
@@ -60,12 +69,13 @@ jobs:
           ASTR relation: Kn = Mach/Re * sqrt(gamma*pi/2)
           Moment model: nonlinear R13
           Grid: 64 x 64
-          Steps requested: 6000
-          dt: 2.5e-5
-          Physical nondimensional final time requested: 0.15
+          Steps requested: 4000
+          dt: 5e-5
+          Nondimensional final time requested: 0.20
           Diffuse walls: alpha = 1
-          Top wall ramp: U_wall=min(10*nstep*dt,1); full speed at step 4000
-          Checkpoints every 1000 steps
+          Top wall ramp: U_wall=min(10*nstep*dt,1); full speed at step 2000
+          Checkpoints every 500 steps
+          Source consistency patch: the R13 moment-wall lid ramp was changed from nstep*dt to 10*nstep*dt so it matches the main-flow wall boundary.
           EOF
           cp work/case/datin/input.ldcav2d results/input_jfm_r13.ldcav2d
           cp work/case/datin/controller results/controller_jfm_r13
@@ -126,16 +136,16 @@ jobs:
         run: |
           set -euxo pipefail
           test -d results
-          zip -r -9 ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP.zip results
-          sha256sum ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP.zip > ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP.zip.sha256
+          zip -r -9 ASTR_NONLINEAR_R13_JFM_CAVITY_PATCHED.zip results
+          sha256sum ASTR_NONLINEAR_R13_JFM_CAVITY_PATCHED.zip > ASTR_NONLINEAR_R13_JFM_CAVITY_PATCHED.zip.sha256
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_PATCHED
           path: |
-            ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP.zip
-            ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP.zip.sha256
+            ASTR_NONLINEAR_R13_JFM_CAVITY_PATCHED.zip
+            ASTR_NONLINEAR_R13_JFM_CAVITY_PATCHED.zip.sha256
           compression-level: 0
           retention-days: 7
