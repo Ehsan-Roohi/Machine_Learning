@@ -1,0 +1,1 @@
+Run ASTR nonlinear R13 cavity for Ar, 300 K, U_lid=100 m/s, Kn=0.05.
