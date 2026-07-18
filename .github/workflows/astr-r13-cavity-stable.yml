@@ -32,13 +32,20 @@ jobs:
           mkdir -p work results/logs results/patched_source_files
           git clone --depth 1 --branch mom_merge https://github.com/astr-code/astr.git work/astr
           git -C work/astr rev-parse HEAD | tee results/ASTR_MOM_MERGE_COMMIT.txt
-
-          before=$(grep -c 'uwall = dble(nstep)\*deltat$' work/astr/src/methodmoment.F90)
-          test "$before" -eq 2
-          sed -i 's/uwall = dble(nstep)\*deltat$/uwall = dble(nstep)*deltat*10.0d0/' work/astr/src/methodmoment.F90
-          after=$(grep -c 'uwall = dble(nstep)\*deltat\*10.0d0$' work/astr/src/methodmoment.F90)
-          test "$after" -eq 2
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('work/astr/src/methodmoment.F90')
+          s=p.read_text()
+          old='uwall = dble(nstep)*deltat'
+          new='uwall = dble(nstep)*deltat*10.0d0'
+          count=s.count(old)
+          assert count == 2, f'Expected 2 moment-wall ramp occurrences, found {count}'
+          s=s.replace(old,new)
+          assert s.count(new) == 2
+          p.write_text(s)
+          PY
           git -C work/astr diff -- src/methodmoment.F90 | tee results/ASTR_R13_LID_RAMP_CONSISTENCY.patch
+          test -s results/ASTR_R13_LID_RAMP_CONSISTENCY.patch
           cp work/astr/src/methodmoment.F90 results/patched_source_files/methodmoment.F90
 
           cmake -S work/astr -B work/build -G Ninja \
@@ -54,10 +61,27 @@ jobs:
           set -euxo pipefail
           mkdir -p work/case
           cp -a work/astr/examples/Lid-Driven-Cavity-Rarefied/datin work/case/
-          sed -i 's/273.0d0, 2.629, 0.1625d0, 1.66667d0/300.d0,10.03136d0,0.309988d0,1.666667d0/' work/case/datin/input.ldcav2d
-          sed -i 's/none,h,r26/none,h,r13/' work/case/datin/input.ldcav2d
-          sed -i -E 's/^([[:space:]]*)100,[[:space:]]*100,[[:space:]]*100,[[:space:]]*50,[[:space:]]*10,[[:space:]]*50/     4000,     500,     500,     500,     100,   500/' work/case/datin/controller
-          sed -i 's/^1.d-4$/5.d-5/' work/case/datin/controller
+          python3 - <<'PY'
+          from pathlib import Path
+          ip=Path('work/case/datin/input.ldcav2d')
+          s=ip.read_text().replace('\r\n','\n')
+          old='273.0d0, 2.629, 0.1625d0, 1.66667d0'
+          assert old in s
+          s=s.replace(old,'300.d0,10.03136d0,0.309988d0,1.666667d0')
+          assert 'none,h,r26' in s
+          s=s.replace('none,h,r26','none,h,r13')
+          ip.write_text(s)
+
+          cp=Path('work/case/datin/controller')
+          c=cp.read_text().replace('\r\n','\n')
+          old_line='     100,     100,     100,      50,      10,    50'
+          assert old_line in c, repr(c)
+          c=c.replace(old_line,'     4000,     500,     500,     500,     100,   500')
+          assert '\n1.d-4\n' in c
+          c=c.replace('\n1.d-4\n','\n5.d-5\n')
+          cp.write_text(c)
+          assert '4000' in cp.read_text() and '5.d-5' in cp.read_text()
+          PY
           cat > results/CASE_METADATA.txt <<'EOF'
           Gas: monatomic argon
           T_wall = 300 K
@@ -75,10 +99,12 @@ jobs:
           Diffuse walls: alpha = 1
           Top wall ramp: U_wall=min(10*nstep*dt,1); full speed at step 2000
           Checkpoints every 500 steps
-          Source consistency patch: the R13 moment-wall lid ramp was changed from nstep*dt to 10*nstep*dt so it matches the main-flow wall boundary.
+          Source consistency patch: R13 moment-wall lid ramp changed from nstep*dt to 10*nstep*dt to match main-flow boundary.
           EOF
           cp work/case/datin/input.ldcav2d results/input_jfm_r13.ldcav2d
           cp work/case/datin/controller results/controller_jfm_r13
+          grep -n '300.d0\|none,h,r13' results/input_jfm_r13.ldcav2d
+          grep -n '4000\|5.d-5' results/controller_jfm_r13
 
       - name: Run nonlinear R13 case
         run: |
