@@ -1,0 +1,165 @@
+name: Continue ASTR nonlinear R13 cavity v2
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'continue-astr-r13-cavity-v2-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  continue-r13:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and analysis libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran cmake make openmpi-bin libopenmpi-dev libhdf5-openmpi-dev unzip zip python3-h5py python3-numpy python3-scipy python3-matplotlib
+
+      - name: Download successful 10000-step artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: base_artifact
+
+      - name: Extract source and checkpoint robustly
+        shell: bash
+        run: |
+          set -euxo pipefail
+          find base_artifact -maxdepth 3 -type f -printf '%p %s\n'
+          INNER=$(find base_artifact -type f -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          test -n "$INNER"
+          mkdir -p base
+          unzip -q "$INNER" -d base
+          test -d base/astr
+          test -d base/case
+          test -s base/case/outdat/flowfield.h5
+          test -s base/case/outdat/auxiliary.h5
+          cp -a base/astr ./astr
+          cp -a base/case ./case
+          cp -a base/results ./results_10000
+          printf 'Restored checkpoint files:\n' > restore_inventory.txt
+          find case -maxdepth 3 -type f -printf '%p %s\n' | sort >> restore_inventory.txt
+
+      - name: Rebuild ASTR mom_merge
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf astr/build
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build -j 2
+          test -x astr/build/bin/astr
+
+      - name: Configure restart from 10000 to 20000
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('case/datin/input.astr_r13_jfm')
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# lrestar'):
+                  lines[i+1]='t'
+          p.write_text('\n'.join(lines)+'\n')
+
+          p=Path('case/datin/controller')
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# maxstep'):
+                  lines[i+1]='    20000,   10000,   10000,    1000,    1000,  1000'
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+          grep -A2 -n '# lrestar' case/datin/input.astr_r13_jfm
+          grep -A2 -n '# maxstep' case/datin/controller
+
+      - name: Continue to step 20000
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd case
+          mpirun -np 4 ../astr/build/bin/astr run datin/input.astr_r13_jfm > ../run_10000_to_20000.log 2>&1
+          cd ..
+          python3 - <<'PY'
+          import h5py
+          with h5py.File('case/outdat/flowfield.h5','r') as h:
+              n=int(h['nstep'][0]); t=float(h['time'][0])
+          print('step',n,'time',t)
+          assert n >= 20000
+          PY
+          mkdir -p checkpoint_20000
+          cp -a case/outdat case/bakup case/datin case/flowstate.dat case/time_report.* checkpoint_20000/
+
+      - name: Continue to step 30000
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('case/datin/controller')
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# maxstep'):
+                  lines[i+1]='    30000,   10000,   10000,    1000,    1000,  1000'
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+          cd case
+          mpirun -np 4 ../astr/build/bin/astr run datin/input.astr_r13_jfm > ../run_20000_to_30000.log 2>&1
+          cd ..
+          python3 - <<'PY'
+          import h5py
+          with h5py.File('case/outdat/flowfield.h5','r') as h:
+              n=int(h['nstep'][0]); t=float(h['time'][0])
+          print('step',n,'time',t)
+          assert n >= 30000
+          PY
+          mkdir -p checkpoint_30000
+          cp -a case/outdat case/bakup case/datin case/flowstate.dat case/time_report.* checkpoint_30000/
+
+      - name: Generate basic checkpoint summary
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import h5py, json, numpy as np
+          out={}
+          for name,path in [('10000','base/case/outdat/flowfield.h5'),('20000','checkpoint_20000/outdat/flowfield.h5'),('30000','checkpoint_30000/outdat/flowfield.h5')]:
+              with h5py.File(path,'r') as h:
+                  rec={'nstep':int(h['nstep'][0]),'time':float(h['time'][0])}
+                  for k in ['ro','p','t','u1','u2','qx','qy','Rxx','Rxy','Ryy','Delta']:
+                      a=np.asarray(h[k])
+                      rec[k]={'min':float(np.nanmin(a)),'max':float(np.nanmax(a)),'rms':float(np.sqrt(np.nanmean(a*a))),'finite':bool(np.isfinite(a).all())}
+                  out[name]=rec
+          open('checkpoint_summary.json','w').write(json.dumps(out,indent=2))
+          PY
+
+      - name: Package continuation results
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=ASTR_R13_JFM_CAVITY_CONTINUED_TO_30000
+          mkdir -p "$ROOT"
+          cp -a checkpoint_20000 checkpoint_30000 "$ROOT"/
+          cp -a case/datin "$ROOT/final_input"
+          cp restore_inventory.txt run_10000_to_20000.log run_20000_to_30000.log checkpoint_summary.json "$ROOT"/
+          cp -a astr "$ROOT/source_mom_merge"
+          zip -r -9 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload continuation results
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_R13_JFM_CAVITY_CONTINUED_TO_30000
+          path: |
+            ASTR_R13_JFM_CAVITY_CONTINUED_TO_30000.zip
+            ASTR_R13_JFM_CAVITY_CONTINUED_TO_30000.zip.sha256
+          compression-level: 0
+          retention-days: 7
