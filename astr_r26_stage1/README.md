@@ -1,18 +1,28 @@
-# ASTR R26 Stage-1 cavity audit
+# ASTR R26 Stage-1 short-gate audit
 
-This package implements the conservative first stage of an R26 extension for the
-argon lid-driven cavity at `Kn=0.05`, `Tw=300 K`, and lid speeds 10 and 100 m/s.
+This package implements a conservative first executable audit of the existing
+ASTR `mom_merge` R26 path for the lid-driven cavity at `Kn=0.05`, `Tw=300 K`,
+and lid speeds 10 and 100 m/s.
 
-Stage 1 intentionally does **not** enable the nonlinear source blocks currently
-wrapped in `if (.false.) then`. It:
+## Important corrections
 
-1. Corrects `Apsi1=1.698d9` to `Apsi1=1.698d0`.
-2. Activates the existing `moment='r26'` path.
-3. Runs an equilibrium residual test.
-4. Runs a 32x32, 10 m/s sanity cavity.
-5. Runs a 32x32, 100 m/s stability pilot with `dt=2.5e-5`.
-6. If all tests pass, runs the 64x64, 100 m/s production pilot to 60,000 steps.
-7. Compares Stage-1 R26 against the validated 40k R13 result and manuscript DSMC metrics.
+1. `Apsi1=1.698d9` is changed to `Apsi1=1.698d0`.
+2. All generated real values use Fortran `D` exponents because ASTR's legacy
+   string parser silently misreads `E` notation.
+3. The top wall is set to full speed from the first step so a short run is a
+   genuine U=10 or U=100 m/s stability test rather than a low-speed ramp test.
+4. Existing R26 nonlinear source blocks wrapped in `if (.false.) then` remain
+   disabled and are explicitly reported.
 
-The result must be labelled **audited Maxwell/semi-linear R26 Stage 1**, not a
-fully nonlinear VHS-argon R26 solution.
+## Short-gate ladder
+
+- 16x16, U=10 m/s, 100 steps
+- 16x16, U=100 m/s, 200 steps
+- 32x32, U=100 m/s, 2000 steps
+
+Each gate checks compilation, HDF5 completeness, all R26 fields, finite values,
+positive density/pressure/temperature, conservative bounds, and nonzero wall-
+driven motion. No long 64x64 run is launched until these gates pass.
+
+Results must be labelled **audited Maxwell/semi-linear R26 Stage 1**, not fully
+nonlinear VHS-argon R26.
