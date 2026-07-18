@@ -22,7 +22,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             gfortran cmake ninja-build git zip time \
-            openmpi-bin libopenmpi-dev libhdf5-openmpi-dev hdf5-tools
+            openmpi-bin libopenmpi-dev libhdf5-openmpi-dev hdf5-tools \
+            python3 python3-numpy python3-h5py
 
       - name: Build ASTR mom_merge
         run: |
@@ -83,38 +84,53 @@ jobs:
           exit 0
 
       - name: Record numerical completion state
+        if: always()
+        continue-on-error: true
         run: |
-          set -euxo pipefail
+          set +e
           python3 - <<'PY'
           from pathlib import Path
-          import json, re, h5py, numpy as np
-          out=Path('results/case_output/outdat/flowfield.h5')
-          info={'process_exit_code':int(Path('results/RUN_EXIT_CODE.txt').read_text().strip())}
-          log=Path('results/logs/run_stdout.log').read_text(errors='replace')
-          info['reported_crash']='COMPUTATION CRASHED' in log
-          info['reported_job_done']='The job is done' in log
-          steps=[int(x) for x in re.findall(r'^\s*(\d+)\s+0\.',log,flags=re.M)]
-          info['last_listed_step']=max(steps) if steps else None
-          if out.exists():
-              with h5py.File(out,'r') as f:
-                  info['checkpoint_step']=int(np.asarray(f['nstep'])[0])
-                  info['checkpoint_time']=float(np.asarray(f['time'])[0])
-                  info['all_datasets_finite']=all(np.isfinite(np.asarray(d)).all() for d in f.values() if hasattr(d,'dtype') and np.issubdtype(d.dtype,np.number))
-                  for key in ['ro','u1','u2','p','t','qx','qy','sigmaxx','sigmaxy','Rxx','Rxy','Ryy','Delta']:
-                      if key in f:
-                          a=np.asarray(f[key])
-                          info[key+'_min']=float(np.nanmin(a)); info[key+'_max']=float(np.nanmax(a))
+          import json, re
+          info={}
+          try:
+              import h5py, numpy as np
+              info['process_exit_code']=int(Path('results/RUN_EXIT_CODE.txt').read_text().strip())
+              log=Path('results/logs/run_stdout.log').read_text(errors='replace')
+              info['reported_crash']='COMPUTATION CRASHED' in log
+              info['reported_job_done']='The job is done' in log
+              steps=[int(x) for x in re.findall(r'^\s*(\d+)\s+0\.',log,flags=re.M)]
+              info['last_listed_step']=max(steps) if steps else None
+              out=Path('results/case_output/outdat/flowfield.h5')
+              if out.exists():
+                  with h5py.File(out,'r') as f:
+                      info['checkpoint_step']=int(np.asarray(f['nstep']).ravel()[0])
+                      info['checkpoint_time']=float(np.asarray(f['time']).ravel()[0])
+                      finite=True
+                      for d in f.values():
+                          if isinstance(d,h5py.Dataset) and np.issubdtype(d.dtype,np.number):
+                              finite = finite and bool(np.isfinite(d[()]).all())
+                      info['all_datasets_finite']=finite
+                      for key in ['ro','u1','u2','p','t','qx','qy','sigmaxx','sigmaxy','Rxx','Rxy','Ryy','Delta']:
+                          if key in f:
+                              a=np.asarray(f[key])
+                              info[key+'_min']=float(np.nanmin(a)); info[key+'_max']=float(np.nanmax(a))
+          except Exception as exc:
+              info['analysis_error']=repr(exc)
           Path('results/NUMERICAL_STATUS.json').write_text(json.dumps(info,indent=2))
           print(json.dumps(info,indent=2))
           PY
+          exit 0
 
       - name: Package results
+        if: always()
         run: |
           set -euxo pipefail
+          test -d results
           zip -r -9 ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP.zip results
           sha256sum ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP.zip > ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP.zip.sha256
 
       - name: Upload results
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ASTR_NONLINEAR_R13_JFM_CAVITY_STABLESTEP
