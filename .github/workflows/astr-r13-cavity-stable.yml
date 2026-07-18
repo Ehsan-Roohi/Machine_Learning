@@ -25,7 +25,7 @@ jobs:
             openmpi-bin libopenmpi-dev libhdf5-openmpi-dev hdf5-tools \
             python3 python3-numpy python3-h5py
 
-      - name: Clone, patch, and build ASTR mom_merge
+      - name: Clone, patch slow-ramp consistency, and build ASTR mom_merge
         run: |
           set -euxo pipefail
           rm -rf work results
@@ -34,25 +34,24 @@ jobs:
           git -C work/astr rev-parse HEAD | tee results/ASTR_MOM_MERGE_COMMIT.txt
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('work/astr/src/methodmoment.F90')
-          s=p.read_text()
-          old='uwall = dble(nstep)*deltat'
-          new='uwall = dble(nstep)*deltat*10.0d0'
-          count=s.count(old)
-          assert count == 2, f'Expected 2 moment-wall ramp occurrences, found {count}'
-          s=s.replace(old,new)
-          assert s.count(new) == 2
-          p.write_text(s)
+          p=Path('work/astr/src/bc.F90')
+          b=p.read_bytes()
+          old=b'uwall = dble(nstep)*deltat*10.0d0'
+          new=b'uwall = dble(nstep)*deltat'
+          count=b.count(old)
+          assert count == 1, f'Expected one accelerated main-wall ramp, found {count}'
+          p.write_bytes(b.replace(old,new))
+          assert p.read_bytes().count(old)==0
           PY
-          git -C work/astr diff -- src/methodmoment.F90 | tee results/ASTR_R13_LID_RAMP_CONSISTENCY.patch
-          test -s results/ASTR_R13_LID_RAMP_CONSISTENCY.patch
-          cp work/astr/src/methodmoment.F90 results/patched_source_files/methodmoment.F90
+          git -C work/astr diff -- src/bc.F90 | tee results/ASTR_R13_SLOW_LID_RAMP_CONSISTENCY.patch
+          test -s results/ASTR_R13_SLOW_LID_RAMP_CONSISTENCY.patch
+          cp work/astr/src/bc.F90 results/patched_source_files/bc.F90
 
           cmake -S work/astr -B work/build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_Fortran_COMPILER=mpifort \
             -DBUILD_TESTING=OFF 2>&1 | tee results/logs/cmake.log
-          cmake --build work/build --parallel 2 2>&1 | tee results/logs/build.log
+          cmake --build work/build --parallel 4 2>&1 | tee results/logs/build.log
           cmake --install work/build 2>&1 | tee results/logs/install.log
           test -x work/astr/bin/astr
 
@@ -76,11 +75,10 @@ jobs:
           c=cp.read_text().replace('\r\n','\n')
           old_line='     100,     100,     100,      50,      10,    50'
           assert old_line in c, repr(c)
-          c=c.replace(old_line,'     4000,     500,     500,     500,     100,   500')
+          c=c.replace(old_line,'    12000,    1000,    1000,    1000,     200,  1000')
           assert '\n1.d-4\n' in c
-          c=c.replace('\n1.d-4\n','\n5.d-5\n')
           cp.write_text(c)
-          assert '4000' in cp.read_text() and '5.d-5' in cp.read_text()
+          assert '12000' in cp.read_text() and '\n1.d-4\n' in cp.read_text()
           PY
           cat > results/CASE_METADATA.txt <<'EOF'
           Gas: monatomic argon
@@ -93,24 +91,25 @@ jobs:
           ASTR relation: Kn = Mach/Re * sqrt(gamma*pi/2)
           Moment model: nonlinear R13
           Grid: 64 x 64
-          Steps requested: 4000
-          dt: 5e-5
-          Nondimensional final time requested: 0.20
+          Steps requested: 12000
+          dt: 1e-4
+          Nondimensional final time requested: 1.20
           Diffuse walls: alpha = 1
-          Top wall ramp: U_wall=min(10*nstep*dt,1); full speed at step 2000
-          Checkpoints every 500 steps
-          Source consistency patch: R13 moment-wall lid ramp changed from nstep*dt to 10*nstep*dt to match main-flow boundary.
+          Consistent slow ramp: U_wall=min(nstep*dt,1) in both main-flow and R13 moment boundary routines
+          Full 100 m/s lid speed reached at step 10000 (t*=1.0)
+          Checkpoints every 1000 steps
+          Source patch: removed the isolated factor 10 from the main-flow lid ramp in bc.F90.
           EOF
           cp work/case/datin/input.ldcav2d results/input_jfm_r13.ldcav2d
           cp work/case/datin/controller results/controller_jfm_r13
           grep -n '300.d0\|none,h,r13' results/input_jfm_r13.ldcav2d
-          grep -n '4000\|5.d-5' results/controller_jfm_r13
+          grep -n '12000\|1.d-4' results/controller_jfm_r13
 
       - name: Run nonlinear R13 case
         run: |
           set +e
           cd work/case
-          /usr/bin/time -v timeout 150m mpirun --oversubscribe -np 2 ../astr/bin/astr run ./datin/input.ldcav2d \
+          /usr/bin/time -v timeout 150m mpirun --oversubscribe -np 4 ../astr/bin/astr run ./datin/input.ldcav2d \
             > ../../results/logs/run_stdout.log 2> ../../results/logs/run_stderr_time.log
           rc=$?
           cd ../..
@@ -162,16 +161,16 @@ jobs:
         run: |
           set -euxo pipefail
           test -d results
-          zip -r -9 ASTR_NONLINEAR_R13_JFM_CAVITY_PATCHED.zip results
-          sha256sum ASTR_NONLINEAR_R13_JFM_CAVITY_PATCHED.zip > ASTR_NONLINEAR_R13_JFM_CAVITY_PATCHED.zip.sha256
+          zip -r -9 ASTR_NONLINEAR_R13_JFM_CAVITY_SLOWRAMP.zip results
+          sha256sum ASTR_NONLINEAR_R13_JFM_CAVITY_SLOWRAMP.zip > ASTR_NONLINEAR_R13_JFM_CAVITY_SLOWRAMP.zip.sha256
 
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ASTR_NONLINEAR_R13_JFM_CAVITY_PATCHED
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_SLOWRAMP
           path: |
-            ASTR_NONLINEAR_R13_JFM_CAVITY_PATCHED.zip
-            ASTR_NONLINEAR_R13_JFM_CAVITY_PATCHED.zip.sha256
+            ASTR_NONLINEAR_R13_JFM_CAVITY_SLOWRAMP.zip
+            ASTR_NONLINEAR_R13_JFM_CAVITY_SLOWRAMP.zip.sha256
           compression-level: 0
           retention-days: 7
