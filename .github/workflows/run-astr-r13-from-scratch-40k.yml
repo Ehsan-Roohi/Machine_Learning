@@ -1,0 +1,134 @@
+name: Run ASTR R13 from scratch 40k
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'run-astr-r13-from-scratch-40k-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  run-r13-40k:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran cmake make openmpi-bin libopenmpi-dev libhdf5-openmpi-dev unzip zip python3-h5py python3-numpy
+
+      - name: Download verified source/input bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: base_artifact
+
+      - name: Restore source and configure clean 40k run
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INNER=$(find base_artifact -type f -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          test -n "$INNER"
+          mkdir -p base
+          unzip -q "$INNER" -d base
+          cp -a base/astr ./astr
+          cp -a base/case ./case
+
+          rm -rf astr/build
+          rm -rf case/outdat case/bakup case/testout case/monitor case/islice case/jslice case/kslice
+          rm -f case/flowstate.dat case/time_report.* case/errnode.log case/*.log
+          mkdir -p case/outdat case/bakup
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('case/datin/input.astr_r13_jfm')
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# lrestar'):
+                  lines[i+1]='f'
+          p.write_text('\n'.join(lines)+'\n')
+
+          p=Path('case/datin/controller')
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# lwsequ'):
+                  lines[i+1]='       f,     f,   f,      f'
+              if line.strip().startswith('# maxstep'):
+                  lines[i+1]='    40000,   10000,   10000,    1000,    1000,  1000'
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+
+          cp case/datin/input.astr_r13_jfm input_used_40000.txt
+          cp case/datin/controller controller_used_40000.txt
+
+      - name: Rebuild ASTR mom_merge
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build -j 2
+          test -x astr/build/bin/astr
+
+      - name: Run nonlinear R13 cavity to 40000
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd case
+          /usr/bin/time -v mpirun --oversubscribe -np 4 ../astr/build/bin/astr run datin/input.astr_r13_jfm > ../run_40000.log 2> ../time_40000.log
+          cd ..
+
+      - name: Validate HDF5 result
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          import h5py, json, numpy as np
+          from pathlib import Path
+          path=Path('case/outdat/flowfield.h5')
+          assert path.is_file() and path.stat().st_size>0
+          with h5py.File(path,'r') as h:
+              n=int(h['nstep'][0]); t=float(h['time'][0])
+              assert n>=40000,(n,40000)
+              out={'target_step':40000,'nstep':n,'time':t,'fields':{}}
+              for k in ['ro','p','t','u1','u2','qx','qy','Rxx','Rxy','Ryy','Delta']:
+                  a=np.asarray(h[k],dtype=float)
+                  assert np.isfinite(a).all(),k
+                  out['fields'][k]={'min':float(a.min()),'max':float(a.max()),'mean':float(a.mean()),'rms':float(np.sqrt(np.mean(a*a))),'finite':True}
+          Path('summary_40000.json').write_text(json.dumps(out,indent=2))
+          print(json.dumps(out,indent=2))
+          PY
+          tail -n 160 run_40000.log > run_40000_tail.txt
+
+      - name: Package result
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000
+          mkdir -p "$ROOT"
+          cp -a case/datin "$ROOT/input" || true
+          cp -a case/outdat "$ROOT/outdat" || true
+          cp -a case/bakup "$ROOT/bakup" || true
+          cp input_used_40000.txt controller_used_40000.txt "$ROOT/" || true
+          cp run_40000.log time_40000.log summary_40000.json run_40000_tail.txt "$ROOT/" || true
+          git -C astr rev-parse HEAD > "$ROOT/ASTR_SOURCE_COMMIT.txt" || true
+          zip -r -9 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000
+          path: |
+            ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000.zip
+            ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000.zip.sha256
+          compression-level: 0
+          retention-days: 7
