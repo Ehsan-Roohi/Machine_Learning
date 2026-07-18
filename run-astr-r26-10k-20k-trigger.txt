@@ -1,0 +1,1 @@
+Continue the validated 32x32 U=100 m/s R26 case from step 10000 to 20000 in 2000-step increments, validating and preserving each checkpoint.
