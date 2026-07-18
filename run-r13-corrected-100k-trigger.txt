@@ -1,0 +1,1 @@
+Fix the R13 Delta closure div(q) typo by replacing the third dqy derivative with dqz, rebuild ASTR, restart the validated 40k cavity state, and continue to 100k in 5k intervals with checkpoint convergence and DSMC diagnostics.
