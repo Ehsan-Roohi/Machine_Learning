@@ -1,0 +1,1 @@
+Start corrected ASTR R26 Stage-1 short gates: 16x16 U=10 for 100 steps, 16x16 U=100 for 200 steps, and 32x32 U=100 for 2000 steps. Do not launch a long production run.
