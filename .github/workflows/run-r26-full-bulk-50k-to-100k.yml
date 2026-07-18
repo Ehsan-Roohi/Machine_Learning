@@ -1,0 +1,301 @@
+name: Audit and continue full-bulk ASTR R26 to 100k
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'run-r26-full-bulk-100k-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: astr-r26-full-bulk-100k-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  full-bulk-r26-to-100k:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and analysis libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran cmake make openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev unzip zip \
+            python3-h5py python3-numpy python3-scipy python3-matplotlib python3-pandas
+
+      - name: Download verified ASTR source bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: source_artifact
+
+      - name: Download validated nonlinear-source R26 50k seed
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_R26_NONLINEAR_SOURCE_V1_32X32_10K_TO_50K
+          run-id: 29658269253
+          github-token: ${{ github.token }}
+          path: seed_artifact
+
+      - name: Download validated R13 40k reference
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000
+          run-id: 29647840498
+          github-token: ${{ github.token }}
+          path: r13_artifact
+
+      - name: Restore source, R26 seed, and R13 reference
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SOURCE_INNER=$(find source_artifact -type f -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          mkdir source_restored
+          unzip -q "$SOURCE_INNER" -d source_restored
+          cp -a source_restored/astr ./astr
+          cp -a source_restored/case ./template_case
+          rm -rf astr/build
+
+          SEED_INNER=$(find seed_artifact -type f -name 'ASTR_R26_NONLINEAR_SOURCE_V1_32X32_10K_TO_50K.zip' -print -quit)
+          mkdir seed_restored
+          unzip -q "$SEED_INNER" -d seed_restored
+          SEED_ROOT=$(find seed_restored -type d -name 'ASTR_R26_NONLINEAR_SOURCE_V1_32X32_10K_TO_50K' -print -quit)
+          cp -a "$SEED_ROOT/final_case" ./r26_case
+          test -f r26_case/outdat/flowfield.h5
+
+          R13_INNER=$(find r13_artifact -type f -name 'ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000.zip' -print -quit)
+          mkdir r13_restored
+          unzip -q "$R13_INNER" -d r13_restored
+          R13_ROOT=$(find r13_restored -type d -name 'ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000' -print -quit)
+          cp -a "$R13_ROOT" ./r13_40k
+          cp -a r13_40k/input r13_40k/datin
+
+      - name: Apply Stage-1, nonlinear-source, and full-bulk closure patches
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p audits patches
+          python3 astr_r26_stage1/patch_r26_stage1.py astr \
+            --report audits/r26_stage1_source_audit.json \
+            --patch-output patches/ASTR_R26_STAGE1.patch
+          python3 astr_r26_stage2/patch_r26_nonlinear_sources.py astr \
+            --report audits/r26_nonlinear_source_v1_audit.json \
+            --patch-output patches/ASTR_R26_NONLINEAR_SOURCE_V1.patch
+          cp astr_r26_stage3/R26_FULL_BULK_CLOSURE_V2.patch patches/
+          patch astr/src/methodmoment.F90 < astr_r26_stage3/R26_FULL_BULK_CLOSURE_V2.patch
+
+          python3 - <<'PY_AUDIT'
+          from pathlib import Path
+          import itertools, json, re
+          import numpy as np
+
+          text=Path('astr/src/methodmoment.F90').read_text()
+          checks={
+            'Apsi1_correct':'Apsi1=1.698d0' in text,
+            'nonlinear_M_enabled':bool(re.search(r'subroutine\s+src_mijk_B.*?if \(\.true\.\) then\s*! R26 nonlinear source',text,re.S|re.I)),
+            'nonlinear_S_enabled':bool(re.search(r'subroutine\s+src_rij_B.*?if \(\.true\.\) then\s*! R26 nonlinear source',text,re.S|re.I)),
+            'nonlinear_N_enabled':bool(re.search(r'subroutine\s+src_delta.*?if \(\.true\.\) then\s*! R26 nonlinear source',text,re.S|re.I)),
+            'full_phi_23_24_active':'call r26_full_phi_closure()' in text and 'c2=0.291d0' in text.lower(),
+            'full_psi_23_25_active':'call r26_full_psi_closure()' in text and 'y2=1.203d0' in text.lower() and 'y3=0.854d0' in text.lower(),
+            'full_omega_23_26_active':'call r26_full_omega_closure()' in text,
+            'quotient_gradients_present':all(x in text for x in ['mm(a,b,c)*grho(d)/(rhov*rhov)','rr(a,b)*grho(c)/(rhov*rhov)','delv*grho(a)/(rhov*rhov)']),
+            'ad_hoc_omega_0p1_removed':'*0.1d0' not in text[text.find('subroutine diffu_delta'):text.find('end subroutine diffu_delta')],
+            'r13_delta_dqz_typo_fixed':'dqy(0:im,0:jm,0:km,3)' not in text[text.find('subroutine deltacal'):text.find('end subroutine deltacal')] and 'dqz(0:im,0:jm,0:km,3)' in text,
+            'wbc_relaxation_retained':'deltatp = subdeltat' in text and 'deltatt = subdeltat' in text,
+          }
+
+          def sym(a):
+              axes=range(a.ndim); out=np.zeros_like(a,dtype=float)
+              perms=list(itertools.permutations(axes))
+              for idx in np.ndindex(a.shape):
+                  out[idx]=np.mean([a[tuple(idx[p] for p in perm)] for perm in perms])
+              return out
+          def stf3(a):
+              s=sym(a); tr=np.einsum('iik->k',s); d=np.eye(3)
+              return s-(np.einsum('ij,k->ijk',d,tr)+np.einsum('ik,j->ijk',d,tr)+np.einsum('jk,i->ijk',d,tr))/5
+          def stf4(a):
+              s=sym(a); b=np.einsum('mmkl->kl',s); c=np.trace(b); d=np.eye(3)
+              return s-(np.einsum('ij,kl->ijkl',d,b)+np.einsum('ik,jl->ijkl',d,b)+np.einsum('il,jk->ijkl',d,b)+np.einsum('jk,il->ijkl',d,b)+np.einsum('jl,ik->ijkl',d,b)+np.einsum('kl,ij->ijkl',d,b))/7+(np.einsum('ij,kl->ijkl',d,d)+np.einsum('ik,jl->ijkl',d,d)+np.einsum('il,jk->ijkl',d,d))*c/35
+          rng=np.random.default_rng(20260718)
+          errors={'stf3_trace_max':0.0,'stf4_trace_max':0.0}
+          for _ in range(20):
+              errors['stf3_trace_max']=max(errors['stf3_trace_max'],float(np.max(np.abs(np.einsum('iik->k',stf3(rng.normal(size=(3,3,3))))))))
+              errors['stf4_trace_max']=max(errors['stf4_trace_max'],float(np.max(np.abs(np.einsum('iikl->kl',stf4(rng.normal(size=(3,3,3,3))))))))
+          required=all(v for k,v in checks.items() if k!='wbc_relaxation_retained') and all(v<1e-11 for v in errors.values())
+          report={
+            'reference':'Gu & Emerson, JFM 636 (2009), equations (16)-(26) and Appendix C',
+            'static_checks':checks,
+            'tensor_projection_oracle':errors,
+            'all_required_bulk_checks_passed':required,
+            'boundary_status':'Appendix-C formulas retained, but imposed through temporal relaxation rather than exact algebraic enforcement.',
+            'model_label':'Maxwell R26 full-bulk-closure v2 with relaxed WBC'
+          }
+          Path('audits/r26_gu_emerson_formula_audit.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+          if not required: raise SystemExit(2)
+          PY_AUDIT
+
+      - name: Build audited full-bulk R26
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build -j 2
+          test -x astr/build/bin/astr
+
+      - name: Run fresh low-speed and U100 smoke gates
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p smoke logs summaries
+          python3 astr_r26_stage1/make_r26_cavity_case.py \
+            --template-case template_case --output smoke/u10_16 \
+            --cells 16 --lid-speed-ms 10 --dt 1e-4 --maxstep 100 --checkpoint-every 50
+          python3 astr_r26_stage1/make_r26_cavity_case.py \
+            --template-case template_case --output smoke/u100_16 \
+            --cells 16 --lid-speed-ms 100 --dt 2.5e-5 --maxstep 200 --checkpoint-every 100
+          for NAME in u10_16 u100_16; do
+            INPUT=$(basename "$(find smoke/${NAME}/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+            (cd smoke/${NAME} && mpirun --oversubscribe -np 4 ../../astr/build/bin/astr run "datin/${INPUT}" > "../../logs/${NAME}.log" 2>&1)
+            ! grep -q 'COMPUTATION CRASHED' "logs/${NAME}.log"
+          done
+          python3 astr_r26_stage1/validate_r26_case.py smoke/u10_16 --target-step 100 --output summaries/u10_16.json
+          python3 astr_r26_stage1/validate_r26_case.py smoke/u100_16 --target-step 200 --output summaries/u100_16.json
+
+      - name: Prepare full-bulk restart at step 50000
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p checkpoints convergence comparison
+          python3 - <<'PY'
+          from pathlib import Path
+          import h5py, shutil
+          case=Path('r26_case')
+          p=next((case/'datin').glob('input.astr*'))
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# lrestar'):
+                  lines[i+1]='t'; break
+          else:
+              raise RuntimeError('lrestar entry not found')
+          p.write_text('\n'.join(lines)+'\n')
+          with h5py.File(case/'outdat/flowfield.h5','r') as h:
+              assert int(h['nstep'][0]) == 50000
+              for key in ['ro','p','t','u1','u2','qx','qy','Rxx','Rxy','Ryy','Delta']:
+                  assert key in h
+          d=Path('checkpoints/step_050000'); d.mkdir()
+          shutil.copy2(case/'outdat/flowfield.h5',d/'flowfield.h5')
+          shutil.copy2(case/'outdat/auxiliary.h5',d/'auxiliary.h5')
+          PY
+
+      - name: Continue full-bulk R26 from 50k to 100k by 2k
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INPUT=$(basename "$(find r26_case/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+          PREVIOUS=50000
+          for TARGET in $(seq 52000 2000 100000); do
+            python3 - "$TARGET" <<'PY'
+          import sys
+          from pathlib import Path
+          target=int(sys.argv[1]); p=Path('r26_case/datin/controller')
+          lines=p.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# maxstep,feqchkpt'):
+                  lines[i+1]=f"{target:9d},    2000,    2000,     500,     200,   200"; break
+          else:
+              raise RuntimeError('controller maxstep entry not found')
+          p.write_text('\n'.join(lines)+'\n')
+          PY
+            LABEL=$(printf 'step_%06d' "$TARGET")
+            PREV_LABEL=$(printf 'step_%06d' "$PREVIOUS")
+            (cd r26_case && /usr/bin/time -v mpirun --oversubscribe -np 4 ../astr/build/bin/astr run "datin/${INPUT}" > "../logs/${LABEL}.log" 2> "../logs/${LABEL}_time.log")
+            ! grep -q 'COMPUTATION CRASHED' "logs/${LABEL}.log"
+            python3 astr_r26_stage1/validate_r26_case.py r26_case --target-step "$TARGET" --output "summaries/${LABEL}.json"
+            python3 astr_r26_stage2/checkpoint_convergence.py \
+              --previous "checkpoints/${PREV_LABEL}/flowfield.h5" \
+              --current r26_case/outdat/flowfield.h5 \
+              --output "convergence/${PREV_LABEL}_to_${LABEL}.json"
+            mkdir "checkpoints/${LABEL}"
+            cp r26_case/outdat/flowfield.h5 r26_case/outdat/auxiliary.h5 "checkpoints/${LABEL}/"
+            PREVIOUS=$TARGET
+          done
+
+      - name: Build 60k 80k and 100k DSMC comparisons
+        shell: bash
+        run: |
+          set -euxo pipefail
+          for STEP in 60000 80000 100000; do
+            LABEL=$(printf 'step_%06d' "$STEP")
+            CASE="comparison/case_${LABEL}"
+            cp -a r26_case "$CASE"
+            cp "checkpoints/${LABEL}/flowfield.h5" "$CASE/outdat/flowfield.h5"
+            cp "checkpoints/${LABEL}/auxiliary.h5" "$CASE/outdat/auxiliary.h5"
+            python3 astr_r26_stage1/compare_r26_r13_dsmc.py \
+              --r26-case "$CASE" --r13-case r13_40k --output "comparison/${LABEL}"
+          done
+
+      - name: Summarize formula audit and convergence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, pandas as pd
+          records=[]
+          for path in sorted(Path('convergence').glob('*.json')):
+              d=json.loads(path.read_text())
+              row={'previous_step':d['previous_step'],'current_step':d['current_step'],**d['relative_RMS_change_percent'],**d['criteria']}
+              records.append(row)
+          pd.DataFrame(records).to_csv('convergence/full_bulk_50k_to_100k.csv',index=False)
+          metrics=[]
+          for step in [60000,80000,100000]:
+              p=Path(f'comparison/step_{step:06d}/comparison_summary.json')
+              d=json.loads(p.read_text())
+              metrics.append({'step':step,**d['R26']})
+          pd.DataFrame(metrics).to_csv('comparison/full_bulk_metrics_60k_80k_100k.csv',index=False)
+          summary={
+              'model_label':'Maxwell R26 full-bulk-closure v2 with relaxed WBC',
+              'initial_state':'restart from validated nonlinear-source-v1 checkpoint at step 50000',
+              'final_step':100000,
+              'formula_audit':'audits/r26_gu_emerson_formula_audit.json',
+              'remaining_limitation':'Appendix-C wall formulas are retained but imposed through temporal relaxation; restart independence and grid convergence remain to be tested.'
+          }
+          Path('audits/full_bulk_100k_run_summary.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+
+      - name: Package full-bulk R26 result
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=ASTR_R26_FULL_BULK_V2_RELAXED_WBC_50K_TO_100K
+          mkdir -p "$ROOT/code"
+          cp -a checkpoints convergence summaries logs comparison audits patches "$ROOT/" || true
+          cp -a r26_case "$ROOT/final_case" || true
+          cp -a astr/src "$ROOT/patched_source_src" || true
+          cp -a astr_r26_stage1 astr_r26_stage2 astr_r26_stage3 "$ROOT/code/"
+          zip -r -9 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+          test -s "${ROOT}.zip"
+
+      - name: Upload full-bulk R26 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_R26_FULL_BULK_V2_RELAXED_WBC_50K_TO_100K
+          path: |
+            ASTR_R26_FULL_BULK_V2_RELAXED_WBC_50K_TO_100K.zip
+            ASTR_R26_FULL_BULK_V2_RELAXED_WBC_50K_TO_100K.zip.sha256
+          compression-level: 0
+          retention-days: 7
