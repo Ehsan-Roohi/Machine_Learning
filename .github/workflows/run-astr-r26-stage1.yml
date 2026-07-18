@@ -1,0 +1,219 @@
+name: Run ASTR R26 Stage-1 cavity audit
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'run-astr-r26-stage1-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  r26-stage1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and analysis libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran cmake make openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev unzip zip \
+            python3-h5py python3-numpy python3-scipy python3-matplotlib
+
+      - name: Download verified ASTR source/input bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: source_artifact
+
+      - name: Download validated R13 40k reference
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000
+          run-id: 29647840498
+          github-token: ${{ github.token }}
+          path: r13_artifact
+
+      - name: Restore source and exact cavity template
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INNER=$(find source_artifact -type f -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          test -n "$INNER"
+          mkdir restored
+          unzip -q "$INNER" -d restored
+          test -d restored/astr
+          test -d restored/case
+          cp -a restored/astr ./astr
+          cp -a restored/case ./template_case
+          rm -rf astr/build
+          git -C astr rev-parse HEAD > ASTR_UPSTREAM_COMMIT.txt || true
+
+          R13_INNER=$(find r13_artifact -type f -name 'ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000.zip' -print -quit)
+          test -n "$R13_INNER"
+          mkdir r13_reference
+          unzip -q "$R13_INNER" -d r13_reference
+          R13_ROOT=$(find r13_reference -maxdepth 2 -type d -name 'ASTR_R13_JFM_CAVITY_FROM_SCRATCH_40000' -print -quit)
+          test -n "$R13_ROOT"
+          cp -a "$R13_ROOT" ./r13_40k
+          cp -a r13_40k/input r13_40k/datin
+
+      - name: Apply conservative R26 Stage-1 patch and source audit
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 astr_r26_stage1/patch_r26_stage1.py astr --report r26_stage1_source_audit.json
+          grep -n 'Apsi1' astr/src/methodmoment.F90 | head -n 5
+          git -C astr diff > ASTR_R26_STAGE1.patch || true
+
+      - name: Build patched ASTR mom_merge
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build -j 2
+          test -x astr/build/bin/astr
+
+      - name: Prepare R26 Stage-1 cases
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p cases summaries logs
+
+          python3 astr_r26_stage1/make_r26_cavity_case.py \
+            --template-case template_case --output cases/equilibrium \
+            --cells 16 --lid-speed-ms 0 --dt 1e-12 --maxstep 5 \
+            --checkpoint-every 5 --equilibrium
+
+          python3 astr_r26_stage1/make_r26_cavity_case.py \
+            --template-case template_case --output cases/u10_32 \
+            --cells 32 --lid-speed-ms 10 --dt 1e-4 --maxstep 12000 \
+            --checkpoint-every 4000
+
+          python3 astr_r26_stage1/make_r26_cavity_case.py \
+            --template-case template_case --output cases/u100_32 \
+            --cells 32 --lid-speed-ms 100 --dt 2.5e-5 --maxstep 40000 \
+            --checkpoint-every 10000
+
+          python3 astr_r26_stage1/make_r26_cavity_case.py \
+            --template-case template_case --output cases/u100_64 \
+            --cells 64 --lid-speed-ms 100 --dt 2.5e-5 --maxstep 60000 \
+            --checkpoint-every 10000
+
+      - name: Run equilibrium residual test
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INPUT=$(basename "$(find cases/equilibrium/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+          cd cases/equilibrium
+          /usr/bin/time -v mpirun --oversubscribe -np 4 ../../astr/build/bin/astr run "datin/${INPUT}" \
+            > ../../logs/equilibrium.log 2> ../../logs/equilibrium_time.log
+          cd ../..
+          python3 astr_r26_stage1/validate_r26_case.py cases/equilibrium \
+            --target-step 5 --mode equilibrium --output summaries/equilibrium.json
+
+      - name: Run 10 m/s R26 sanity cavity
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INPUT=$(basename "$(find cases/u10_32/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+          cd cases/u10_32
+          /usr/bin/time -v mpirun --oversubscribe -np 4 ../../astr/build/bin/astr run "datin/${INPUT}" \
+            > ../../logs/u10_32.log 2> ../../logs/u10_32_time.log
+          cd ../..
+          python3 astr_r26_stage1/validate_r26_case.py cases/u10_32 \
+            --target-step 12000 --mode moving --output summaries/u10_32.json
+
+      - name: Run 100 m/s 32x32 R26 stability pilot
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INPUT=$(basename "$(find cases/u100_32/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+          cd cases/u100_32
+          /usr/bin/time -v mpirun --oversubscribe -np 4 ../../astr/build/bin/astr run "datin/${INPUT}" \
+            > ../../logs/u100_32.log 2> ../../logs/u100_32_time.log
+          cd ../..
+          python3 astr_r26_stage1/validate_r26_case.py cases/u100_32 \
+            --target-step 40000 --mode moving --output summaries/u100_32.json
+
+      - name: Run 100 m/s 64x64 R26 production pilot
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INPUT=$(basename "$(find cases/u100_64/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+          cd cases/u100_64
+          /usr/bin/time -v mpirun --oversubscribe -np 4 ../../astr/build/bin/astr run "datin/${INPUT}" \
+            > ../../logs/u100_64.log 2> ../../logs/u100_64_time.log
+          cd ../..
+          python3 astr_r26_stage1/validate_r26_case.py cases/u100_64 \
+            --target-step 60000 --mode moving --output summaries/u100_64.json
+
+      - name: Compare Stage-1 R26 with R13 and DSMC
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 astr_r26_stage1/compare_r26_r13_dsmc.py \
+            --r26-case cases/u100_64 --r13-case r13_40k --output comparison
+
+          python3 - <<'PY'
+          import h5py, json, numpy as np
+          from pathlib import Path
+
+          fields = ['ro','p','t','u1','u2','qx','qy','Rxx','Rxy','Ryy','Delta']
+          current = Path('cases/u100_64/outdat/flowfield.h5')
+          previous = Path('cases/u100_64/bakup/flowfield.h5')
+          report = {}
+          if previous.is_file():
+              with h5py.File(previous,'r') as hp, h5py.File(current,'r') as hc:
+                  report['previous_step'] = int(hp['nstep'][0])
+                  report['current_step'] = int(hc['nstep'][0])
+                  report['relative_RMS_change_percent'] = {}
+                  for key in fields:
+                      a=np.asarray(hp[key],dtype=float)
+                      b=np.asarray(hc[key],dtype=float)
+                      report['relative_RMS_change_percent'][key] = float(
+                          100*np.sqrt(np.mean((b-a)**2))/(np.sqrt(np.mean(b*b))+1e-30)
+                      )
+          Path('comparison/r26_last_checkpoint_convergence.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+          PY
+
+      - name: Package complete Stage-1 source and results
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=ASTR_R26_STAGE1_U100_KN005
+          mkdir -p "$ROOT"
+          cp -a astr_r26_stage1 "$ROOT/code"
+          cp ASTR_UPSTREAM_COMMIT.txt ASTR_R26_STAGE1.patch r26_stage1_source_audit.json "$ROOT/" || true
+          cp -a summaries logs comparison "$ROOT/" || true
+          for C in equilibrium u10_32 u100_32 u100_64; do
+            mkdir -p "$ROOT/cases/$C"
+            cp -a "cases/$C/datin" "$ROOT/cases/$C/" || true
+            cp -a "cases/$C/outdat" "$ROOT/cases/$C/" || true
+            cp -a "cases/$C/bakup" "$ROOT/cases/$C/" || true
+            cp "cases/$C/case_metadata.json" "$ROOT/cases/$C/" || true
+          done
+          cp -a astr/src "$ROOT/patched_source_src"
+          zip -r -9 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload R26 Stage-1 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_R26_STAGE1_U100_KN005
+          path: |
+            ASTR_R26_STAGE1_U100_KN005.zip
+            ASTR_R26_STAGE1_U100_KN005.zip.sha256
+          compression-level: 0
+          retention-days: 7
