@@ -26,7 +26,7 @@ jobs:
       - name: Install compiler and libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y gfortran cmake make openmpi-bin libopenmpi-dev libhdf5-openmpi-dev unzip zip python3-h5py python3-numpy
+          sudo apt-get install -y gfortran cmake make openmpi-bin libopenmpi-dev libhdf5-openmpi-dev unzip zip python3-h5py python3-numpy time
 
       - name: Download verified 10000-step source bundle
         uses: actions/download-artifact@v4
@@ -93,7 +93,7 @@ jobs:
         run: |
           set -euxo pipefail
           cd case
-          /usr/bin/time -v mpirun -np 4 ../astr/build/bin/astr run datin/input.astr_r13_jfm > ../run_${{ matrix.maxstep }}.log 2> ../time_${{ matrix.maxstep }}.log
+          /usr/bin/time -v mpirun --oversubscribe -np 4 ../astr/build/bin/astr run datin/input.astr_r13_jfm > ../run_${{ matrix.maxstep }}.log 2> ../time_${{ matrix.maxstep }}.log
           cd ..
 
       - name: Validate and summarize result
