@@ -38,7 +38,7 @@ jobs:
           github-token: ${{ github.token }}
           path: source_artifact
 
-      - name: Download successful R26 2000-step seed
+      - name: Download successful R26 step-2000 seed
         uses: actions/download-artifact@v4
         with:
           name: ASTR_R26_STAGE1_SHORT_GATES_U100_KN005
@@ -85,7 +85,7 @@ jobs:
           cp -a "$R13_ROOT" ./r13_40k
           cp -a r13_40k/input r13_40k/datin
 
-      - name: Apply exact audited R26 Stage-1 patch and build
+      - name: Apply audited R26 Stage-1 patch and build
         shell: bash
         run: |
           set -euxo pipefail
@@ -95,178 +95,63 @@ jobs:
           cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
           cmake --build astr/build -j 2
           test -x astr/build/bin/astr
+          chmod +x astr_r26_stage1/run_r26_restart_segment.sh
 
-      - name: Prepare restart from validated step 2000
+      - name: Prepare validated restart at step 2000
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p checkpoints summaries convergence logs comparison
           python3 - <<'PY'
           from pathlib import Path
-          import h5py, shutil
+          import h5py
+          import shutil
 
           case = Path('r26_case')
-          input_path = next((case/'datin').glob('input.astr*'))
-          lines = input_path.read_text().splitlines()
-          for i, line in enumerate(lines):
+          input_path = next((case / 'datin').glob('input.astr*'))
+          lines = input_path.read_text(encoding='utf-8').splitlines()
+          for index, line in enumerate(lines):
               if line.strip().startswith('# lrestar'):
-                  lines[i+1] = 't'
+                  lines[index + 1] = 't'
                   break
           else:
               raise RuntimeError('lrestar entry not found')
-          input_path.write_text('\n'.join(lines)+'\n')
+          input_path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
-          with h5py.File(case/'outdat/flowfield.h5','r') as h:
+          with h5py.File(case / 'outdat' / 'flowfield.h5', 'r') as h:
               assert int(h['nstep'][0]) == 2000
               assert float(h['time'][0]) > 0.0
-          with h5py.File(case/'outdat/auxiliary.h5','r') as h:
+          with h5py.File(case / 'outdat' / 'auxiliary.h5', 'r') as h:
               assert int(h['nstep'][0]) == 2000
 
-          dst = Path('checkpoints/step_02000')
-          dst.mkdir(parents=True)
-          shutil.copy2(case/'outdat/flowfield.h5', dst/'flowfield.h5')
-          shutil.copy2(case/'outdat/auxiliary.h5', dst/'auxiliary.h5')
-          shutil.copy2(case/'case_metadata.json', dst/'case_metadata.json')
+          checkpoint = Path('checkpoints/step_02000')
+          checkpoint.mkdir(parents=True)
+          shutil.copy2(case / 'outdat' / 'flowfield.h5', checkpoint / 'flowfield.h5')
+          shutil.copy2(case / 'outdat' / 'auxiliary.h5', checkpoint / 'auxiliary.h5')
+          shutil.copy2(case / 'case_metadata.json', checkpoint / 'case_metadata.json')
           PY
 
       - name: Continue R26 from 2000 to 4000
-        shell: bash
         run: |
-          set -euxo pipefail
-          TARGET=4000 PREVIOUS=2000 LABEL=step_04000 bash -c '
-            python3 - "$TARGET" <<"PY"
-          import sys
-          from pathlib import Path
-          target=int(sys.argv[1]); p=Path("r26_case/datin/controller")
-          lines=p.read_text().splitlines()
-          for i,line in enumerate(lines):
-              if line.strip().startswith("# maxstep,feqchkpt"):
-                  lines[i+1]=f"{target:9d},    2000,    2000,     500,     200,   200"
-                  break
-          p.write_text("\n".join(lines)+"\n")
-          PY
-            INPUT=$(basename "$(find r26_case/datin -maxdepth 1 -name "input.astr*" -print -quit)")
-            cd r26_case
-            /usr/bin/time -v mpirun --oversubscribe -np 4 ../astr/build/bin/astr run "datin/${INPUT}" > ../logs/step_04000.log 2> ../logs/step_04000_time.log
-            cd ..
-            ! grep -q "COMPUTATION CRASHED" logs/step_04000.log
-            python3 astr_r26_stage1/validate_r26_case.py r26_case --target-step 4000 --output summaries/step_04000.json
-          '
-          python3 - <<'PY'
-          from pathlib import Path
-          import h5py, json, numpy as np, shutil
-          fields=['ro','p','t','u1','u2','qx','qy','Rxx','Rxy','Ryy','Delta']
-          prev=Path('checkpoints/step_02000/flowfield.h5'); cur=Path('r26_case/outdat/flowfield.h5')
-          report={'previous_step':2000,'current_step':4000,'relative_RMS_change_percent':{}}
-          with h5py.File(prev,'r') as a,h5py.File(cur,'r') as b:
-              for k in fields:
-                  x=np.asarray(a[k],float); y=np.asarray(b[k],float)
-                  report['relative_RMS_change_percent'][k]=float(100*np.sqrt(np.mean((y-x)**2))/(np.sqrt(np.mean(y*y))+1e-30))
-          Path('convergence/step_02000_to_04000.json').write_text(json.dumps(report,indent=2))
-          d=Path('checkpoints/step_04000'); d.mkdir(); shutil.copy2(cur,d/'flowfield.h5'); shutil.copy2('r26_case/outdat/auxiliary.h5',d/'auxiliary.h5')
-          print(json.dumps(report,indent=2))
-          PY
+          bash astr_r26_stage1/run_r26_restart_segment.sh \
+            4000 2000 r26_case "$GITHUB_WORKSPACE/astr/build/bin/astr"
 
       - name: Continue R26 from 4000 to 6000
-        shell: bash
         run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('r26_case/datin/controller'); lines=p.read_text().splitlines()
-          for i,line in enumerate(lines):
-              if line.strip().startswith('# maxstep,feqchkpt'):
-                  lines[i+1]=f"{6000:9d},    2000,    2000,     500,     200,   200"; break
-          p.write_text('\n'.join(lines)+'\n')
-          PY
-          INPUT=$(basename "$(find r26_case/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
-          cd r26_case
-          /usr/bin/time -v mpirun --oversubscribe -np 4 ../astr/build/bin/astr run "datin/${INPUT}" > ../logs/step_06000.log 2> ../logs/step_06000_time.log
-          cd ..
-          ! grep -q 'COMPUTATION CRASHED' logs/step_06000.log
-          python3 astr_r26_stage1/validate_r26_case.py r26_case --target-step 6000 --output summaries/step_06000.json
-          python3 - <<'PY'
-          from pathlib import Path
-          import h5py, json, numpy as np, shutil
-          fields=['ro','p','t','u1','u2','qx','qy','Rxx','Rxy','Ryy','Delta']
-          prev=Path('checkpoints/step_04000/flowfield.h5'); cur=Path('r26_case/outdat/flowfield.h5')
-          report={'previous_step':4000,'current_step':6000,'relative_RMS_change_percent':{}}
-          with h5py.File(prev,'r') as a,h5py.File(cur,'r') as b:
-              for k in fields:
-                  x=np.asarray(a[k],float); y=np.asarray(b[k],float)
-                  report['relative_RMS_change_percent'][k]=float(100*np.sqrt(np.mean((y-x)**2))/(np.sqrt(np.mean(y*y))+1e-30))
-          Path('convergence/step_04000_to_06000.json').write_text(json.dumps(report,indent=2))
-          d=Path('checkpoints/step_06000'); d.mkdir(); shutil.copy2(cur,d/'flowfield.h5'); shutil.copy2('r26_case/outdat/auxiliary.h5',d/'auxiliary.h5')
-          print(json.dumps(report,indent=2))
-          PY
+          bash astr_r26_stage1/run_r26_restart_segment.sh \
+            6000 4000 r26_case "$GITHUB_WORKSPACE/astr/build/bin/astr"
 
       - name: Continue R26 from 6000 to 8000
-        shell: bash
         run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('r26_case/datin/controller'); lines=p.read_text().splitlines()
-          for i,line in enumerate(lines):
-              if line.strip().startswith('# maxstep,feqchkpt'):
-                  lines[i+1]=f"{8000:9d},    2000,    2000,     500,     200,   200"; break
-          p.write_text('\n'.join(lines)+'\n')
-          PY
-          INPUT=$(basename "$(find r26_case/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
-          cd r26_case
-          /usr/bin/time -v mpirun --oversubscribe -np 4 ../astr/build/bin/astr run "datin/${INPUT}" > ../logs/step_08000.log 2> ../logs/step_08000_time.log
-          cd ..
-          ! grep -q 'COMPUTATION CRASHED' logs/step_08000.log
-          python3 astr_r26_stage1/validate_r26_case.py r26_case --target-step 8000 --output summaries/step_08000.json
-          python3 - <<'PY'
-          from pathlib import Path
-          import h5py, json, numpy as np, shutil
-          fields=['ro','p','t','u1','u2','qx','qy','Rxx','Rxy','Ryy','Delta']
-          prev=Path('checkpoints/step_06000/flowfield.h5'); cur=Path('r26_case/outdat/flowfield.h5')
-          report={'previous_step':6000,'current_step':8000,'relative_RMS_change_percent':{}}
-          with h5py.File(prev,'r') as a,h5py.File(cur,'r') as b:
-              for k in fields:
-                  x=np.asarray(a[k],float); y=np.asarray(b[k],float)
-                  report['relative_RMS_change_percent'][k]=float(100*np.sqrt(np.mean((y-x)**2))/(np.sqrt(np.mean(y*y))+1e-30))
-          Path('convergence/step_06000_to_08000.json').write_text(json.dumps(report,indent=2))
-          d=Path('checkpoints/step_08000'); d.mkdir(); shutil.copy2(cur,d/'flowfield.h5'); shutil.copy2('r26_case/outdat/auxiliary.h5',d/'auxiliary.h5')
-          print(json.dumps(report,indent=2))
-          PY
+          bash astr_r26_stage1/run_r26_restart_segment.sh \
+            8000 6000 r26_case "$GITHUB_WORKSPACE/astr/build/bin/astr"
 
       - name: Continue R26 from 8000 to 10000
-        shell: bash
         run: |
-          set -euxo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('r26_case/datin/controller'); lines=p.read_text().splitlines()
-          for i,line in enumerate(lines):
-              if line.strip().startswith('# maxstep,feqchkpt'):
-                  lines[i+1]=f"{10000:9d},    2000,    2000,     500,     200,   200"; break
-          p.write_text('\n'.join(lines)+'\n')
-          PY
-          INPUT=$(basename "$(find r26_case/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
-          cd r26_case
-          /usr/bin/time -v mpirun --oversubscribe -np 4 ../astr/build/bin/astr run "datin/${INPUT}" > ../logs/step_10000.log 2> ../logs/step_10000_time.log
-          cd ..
-          ! grep -q 'COMPUTATION CRASHED' logs/step_10000.log
-          python3 astr_r26_stage1/validate_r26_case.py r26_case --target-step 10000 --output summaries/step_10000.json
-          python3 - <<'PY'
-          from pathlib import Path
-          import h5py, json, numpy as np, shutil
-          fields=['ro','p','t','u1','u2','qx','qy','Rxx','Rxy','Ryy','Delta']
-          prev=Path('checkpoints/step_08000/flowfield.h5'); cur=Path('r26_case/outdat/flowfield.h5')
-          report={'previous_step':8000,'current_step':10000,'relative_RMS_change_percent':{}}
-          with h5py.File(prev,'r') as a,h5py.File(cur,'r') as b:
-              for k in fields:
-                  x=np.asarray(a[k],float); y=np.asarray(b[k],float)
-                  report['relative_RMS_change_percent'][k]=float(100*np.sqrt(np.mean((y-x)**2))/(np.sqrt(np.mean(y*y))+1e-30))
-          Path('convergence/step_08000_to_10000.json').write_text(json.dumps(report,indent=2))
-          d=Path('checkpoints/step_10000'); d.mkdir(); shutil.copy2(cur,d/'flowfield.h5'); shutil.copy2('r26_case/outdat/auxiliary.h5',d/'auxiliary.h5')
-          print(json.dumps(report,indent=2))
-          PY
+          bash astr_r26_stage1/run_r26_restart_segment.sh \
+            10000 8000 r26_case "$GITHUB_WORKSPACE/astr/build/bin/astr"
 
-      - name: Build ladder summary and preliminary R26/R13/DSMC comparison
+      - name: Build convergence summary and preliminary comparison
         shell: bash
         run: |
           set -euxo pipefail
@@ -275,16 +160,21 @@ jobs:
           from pathlib import Path
           import pandas as pd
 
-          rows=[]
-          for p in sorted(Path('convergence').glob('step_*.json')):
-              d=json.loads(p.read_text())
-              row={'previous_step':d['previous_step'],'current_step':d['current_step']}
-              row.update(d['relative_RMS_change_percent'])
+          rows = []
+          for path in sorted(Path('convergence').glob('step_*.json')):
+              data = json.loads(path.read_text(encoding='utf-8'))
+              row = {
+                  'previous_step': data['previous_step'],
+                  'current_step': data['current_step'],
+              }
+              row.update(data['relative_RMS_change_percent'])
               rows.append(row)
-          df=pd.DataFrame(rows)
-          df.to_csv('convergence/r26_32_ladder_convergence.csv',index=False)
-          Path('convergence/r26_32_ladder_convergence.json').write_text(json.dumps(rows,indent=2))
-          print(df.to_string(index=False))
+          table = pd.DataFrame(rows)
+          table.to_csv('convergence/r26_32_ladder_convergence.csv', index=False)
+          Path('convergence/r26_32_ladder_convergence.json').write_text(
+              json.dumps(rows, indent=2), encoding='utf-8'
+          )
+          print(table.to_string(index=False))
           PY
 
           python3 astr_r26_stage1/compare_r26_r13_dsmc.py \
