@@ -1,0 +1,129 @@
+name: Continue nonlinear R26 v3 from validated 20k to 100k
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'run-r26-v3-20k-to-100k-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: r26-v3-20k-to-100k-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  to-40k:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y gfortran cmake make patch openmpi-bin libopenmpi-dev libhdf5-openmpi-dev unzip zip python3-h5py python3-numpy python3-scipy
+      - name: Download pristine source
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: source_artifact
+      - name: Download validated R26-v3 20k seed
+        uses: actions/download-artifact@v4
+        with:
+          name: R26_V3_STRICT_FPE_FRESH_U100_KN005_N32_20K_DIAGNOSTIC
+          run-id: 29689454883
+          github-token: ${{ github.token }}
+          path: seed_artifact
+      - name: Prepare exact continuation state
+        run: python3 diagnostics/prepare_r26_continuation.py --source-artifact source_artifact --seed-artifact seed_artifact --output state
+      - name: Continue to 40k
+        run: bash diagnostics/run_r26_segment.sh state 40000
+      - name: Upload 40k state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R26_V3_CONT_STATE_040000
+          path: state
+          retention-days: 14
+          compression-level: 6
+
+  to-60k:
+    needs: to-40k
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y openmpi-bin libopenmpi-dev libhdf5-openmpi-dev python3-h5py python3-numpy python3-scipy zip
+      - uses: actions/download-artifact@v4
+        with:
+          name: R26_V3_CONT_STATE_040000
+          path: state
+      - name: Continue to 60k
+        run: bash diagnostics/run_r26_segment.sh state 60000
+      - name: Upload 60k state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R26_V3_CONT_STATE_060000
+          path: state
+          retention-days: 14
+          compression-level: 6
+
+  to-80k:
+    needs: to-60k
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y openmpi-bin libopenmpi-dev libhdf5-openmpi-dev python3-h5py python3-numpy python3-scipy zip
+      - uses: actions/download-artifact@v4
+        with:
+          name: R26_V3_CONT_STATE_060000
+          path: state
+      - name: Continue to 80k
+        run: bash diagnostics/run_r26_segment.sh state 80000
+      - name: Upload 80k state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R26_V3_CONT_STATE_080000
+          path: state
+          retention-days: 14
+          compression-level: 6
+
+  to-100k:
+    needs: to-80k
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y openmpi-bin libopenmpi-dev libhdf5-openmpi-dev python3-h5py python3-numpy python3-scipy zip
+      - uses: actions/download-artifact@v4
+        with:
+          name: R26_V3_CONT_STATE_080000
+          path: state
+      - name: Continue to 100k
+        run: bash diagnostics/run_r26_segment.sh state 100000
+      - name: Package final 40k 60k 80k 100k evidence
+        if: always()
+        run: |
+          ROOT=R26_V3_U100_KN005_N32_20K_TO_100K
+          mkdir -p "$ROOT"
+          cp -a state/. "$ROOT/"
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+      - name: Upload final R26-v3 continuation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R26_V3_U100_KN005_N32_20K_TO_100K
+          path: |
+            R26_V3_U100_KN005_N32_20K_TO_100K.zip
+            R26_V3_U100_KN005_N32_20K_TO_100K.zip.sha256
+          retention-days: 14
+          compression-level: 0
