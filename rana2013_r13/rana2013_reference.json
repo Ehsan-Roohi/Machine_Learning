@@ -1,0 +1,20 @@
+{
+  "paper": "Rana, Torrilhon and Struchtrup, Journal of Computational Physics 236 (2013) 169-186",
+  "T0_K": 273.0,
+  "lid_velocity_m_per_s": 50.0,
+  "accommodation_chi": 1.0,
+  "profile_kn": [0.010, 0.0798, 0.3989],
+  "temperature_profile_kn": [0.0798, 0.3989],
+  "global_metrics": {
+    "0.010": {"D_R13": 0.1585, "G_R13": 0.1893},
+    "0.071": {"D_R13": 0.4271, "G_R13": 0.1428},
+    "0.141": {"D_R13": 0.5084, "G_R13": 0.1216},
+    "0.354": {"D_R13": 0.5644, "G_R13": 0.1044},
+    "0.707": {"D_R13": 0.5722, "G_R13": 0.1003}
+  },
+  "grid_study": {
+    "paper_kn": [0.05, 0.10, 0.50],
+    "grid_points": [40, 50, 75, 100, 200, 400],
+    "reported_result": "successive relative velocity change below 1 percent beyond 75x75"
+  }
+}
