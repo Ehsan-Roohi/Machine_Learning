@@ -48,10 +48,12 @@ jobs:
           python3 rana2013_r13/audit_rana2013_formulas.py astr --output audits/formula_oracle_report.json
       - name: Build exact Rana R13 source
         run: |
-          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_Fortran_FLAGS_RELEASE="-O3 -g -ffpe-trap=invalid -fbacktrace" \
-            -DBUILD_TESTING=OFF
-          cmake --build astr/build -j 2
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          FLAGS_FILE=astr/build/src/CMakeFiles/astr.dir/flags.make
+          test -f "$FLAGS_FILE"
+          grep -F -- '-ffpe-trap=invalid' "$FLAGS_FILE"
+          grep -F -- '-fbacktrace' "$FLAGS_FILE"
+          cmake --build astr/build --verbose -j 2
           test -x astr/build/bin/astr
       - name: Fresh equilibrium smoke gate
         shell: bash
