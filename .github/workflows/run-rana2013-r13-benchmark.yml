@@ -130,8 +130,54 @@ jobs:
           compression-level: 6
           retention-days: 14
 
-  paper-core:
+  matrix-runtime-preflight:
     needs: audit-build-smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install matrix runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            openmpi-bin libopenmpi-dev libhdf5-openmpi-dev \
+            python3-h5py python3-numpy zip time
+      - uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          path: audited
+      - name: Locate and validate audited executable
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo "===== downloaded artifact tree ====="
+          find audited -maxdepth 4 -printf '%y %p %s bytes\n' | sort | tee audited/artifact_tree.txt
+          EXE=$(find audited -maxdepth 4 -type f -name astr -print -quit)
+          test -n "$EXE"
+          chmod +x "$EXE"
+          echo "ASTR_EXE=$PWD/$EXE" | tee -a "$GITHUB_ENV"
+          file "$EXE" | tee audited/executable_file.txt
+          ldd "$EXE" | tee audited/executable_ldd.txt
+          if grep -q 'not found' audited/executable_ldd.txt; then
+            echo "Missing shared-library dependency in audited executable" >&2
+            exit 2
+          fi
+          mpirun --version | tee audited/mpirun_version.txt
+          test -x "$EXE"
+      - name: Upload matrix runtime preflight
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RANA2013_R13_MATRIX_RUNTIME_PREFLIGHT
+          path: |
+            audited/artifact_tree.txt
+            audited/executable_file.txt
+            audited/executable_ldd.txt
+            audited/mpirun_version.txt
+          retention-days: 14
+
+  paper-core:
+    needs: matrix-runtime-preflight
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -148,21 +194,37 @@ jobs:
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y openmpi-bin libopenmpi-dev python3-h5py python3-numpy zip time
+      - name: Install matrix runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            openmpi-bin libopenmpi-dev libhdf5-openmpi-dev \
+            python3-h5py python3-numpy zip time
       - uses: actions/download-artifact@v4
         with:
           name: ASTR_RANA2013_R13_AUDITED_SOURCE
           path: audited
-      - name: Restore executable permission and generate exact paper case
+      - name: Locate executable, validate runtime, and generate exact paper case
+        shell: bash
         run: |
-          chmod +x audited/astr/build/bin/astr
+          set -euxo pipefail
+          EXE=$(find audited -maxdepth 4 -type f -name astr -print -quit)
+          test -n "$EXE"
+          chmod +x "$EXE"
+          file "$EXE"
+          ldd "$EXE" | tee audited/executable_ldd.txt
+          if grep -q 'not found' audited/executable_ldd.txt; then
+            echo "Missing shared-library dependency in audited executable" >&2
+            exit 2
+          fi
+          echo "ASTR_EXE=$PWD/$EXE" >> "$GITHUB_ENV"
           python3 audited/rana2013_r13/make_rana2013_case.py --template-case audited/template_case --output case --paper-kn ${{ matrix.paper_kn }} --grid-points 75 --maxstep 100000 --dt 1.0e-5 --checkpoint-every 5000
       - name: Run from equilibrium and analyze
         id: solve
         continue-on-error: true
         env:
           WALLCLOCK_MINUTES: 300
-        run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$PWD/audited/astr/build/bin/astr" "$PWD/audited/rana2013_r13/rana2013_reference.json"
+        run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$ASTR_EXE" "$PWD/audited/rana2013_r13/rana2013_reference.json"
       - name: Package restartable result
         if: always()
         run: |
@@ -183,7 +245,7 @@ jobs:
           retention-days: 14
 
   paper-grid-study:
-    needs: audit-build-smoke
+    needs: matrix-runtime-preflight
     strategy:
       fail-fast: false
       max-parallel: 6
@@ -194,20 +256,36 @@ jobs:
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y openmpi-bin libopenmpi-dev python3-h5py python3-numpy zip time
+      - name: Install matrix runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            openmpi-bin libopenmpi-dev libhdf5-openmpi-dev \
+            python3-h5py python3-numpy zip time
       - uses: actions/download-artifact@v4
         with:
           name: ASTR_RANA2013_R13_AUDITED_SOURCE
           path: audited
-      - name: Restore executable permission and generate exact mesh-study case
+      - name: Locate executable, validate runtime, and generate exact mesh-study case
+        shell: bash
         run: |
-          chmod +x audited/astr/build/bin/astr
+          set -euxo pipefail
+          EXE=$(find audited -maxdepth 4 -type f -name astr -print -quit)
+          test -n "$EXE"
+          chmod +x "$EXE"
+          file "$EXE"
+          ldd "$EXE" | tee audited/executable_ldd.txt
+          if grep -q 'not found' audited/executable_ldd.txt; then
+            echo "Missing shared-library dependency in audited executable" >&2
+            exit 2
+          fi
+          echo "ASTR_EXE=$PWD/$EXE" >> "$GITHUB_ENV"
           python3 audited/rana2013_r13/make_rana2013_case.py --template-case audited/template_case --output case --paper-kn ${{ matrix.paper_kn }} --grid-points ${{ matrix.grid_points }} --maxstep 100000 --dt 1.0e-5 --checkpoint-every 5000
       - name: Run mesh case and retain last checkpoint
         continue-on-error: true
         env:
           WALLCLOCK_MINUTES: 300
-        run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$PWD/audited/astr/build/bin/astr" "$PWD/audited/rana2013_r13/rana2013_reference.json"
+        run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$ASTR_EXE" "$PWD/audited/rana2013_r13/rana2013_reference.json"
       - name: Package grid result
         if: always()
         run: |
