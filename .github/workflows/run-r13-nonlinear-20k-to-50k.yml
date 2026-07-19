@@ -1,0 +1,217 @@
+name: R13 nonlinear 20k-to-50k matched-time continuation
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/run-r13-nonlinear-20k-to-50k.yml'
+      - 'diagnostics/analyze_r13_nonlinear_20k_to_50k.py'
+      - 'run-r13-nonlinear-20k-to-50k-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: r13-nonlinear-20k-to-50k-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nonlinear-r13-matched-time-continuation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime and analysis dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            openmpi-bin libopenmpi-dev libhdf5-openmpi-dev \
+            python3-h5py python3-numpy python3-scipy unzip zip time
+
+      - name: Download audited nonlinear R13 solver
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          run-id: 29673135273
+          github-token: ${{ github.token }}
+          path: audited
+
+      - name: Download verified exact-20k seed
+        uses: actions/download-artifact@v4
+        with:
+          name: R13_NONLINEAR_U100_KN005_N32_20K_DIAGNOSTIC
+          run-id: 29689596458
+          github-token: ${{ github.token }}
+          path: seed_artifact
+
+      - name: Verify solver and seed provenance
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN="$PWD/audited/astr/build/bin/astr"
+          test -f "$BIN"
+          chmod 0755 "$BIN"
+          ldd "$BIN" | tee audited/continuation_ldd.txt
+          ! grep -Fq 'not found' audited/continuation_ldd.txt
+          FLAGS=audited/astr/build/src/CMakeFiles/astr.dir/flags.make
+          grep -F -- '-ffpe-trap=invalid' "$FLAGS"
+          grep -F -- '-fbacktrace' "$FLAGS"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('audited/audits/formula_patch_report.json').read_text())
+          oracle=json.loads(Path('audited/audits/formula_oracle_report.json').read_text())
+          assert report['all_passed'] and oracle['all_passed']
+          assert report['checks']['interior_only_bare_flow_decode']
+          assert report['checks']['moment_interior_decode_with_face_swap']
+          PY
+          (cd seed_artifact && sha256sum -c R13_NONLINEAR_U100_KN005_N32_20K_DIAGNOSTIC.zip.sha256)
+          mkdir seed_unpacked
+          unzip -q seed_artifact/R13_NONLINEAR_U100_KN005_N32_20K_DIAGNOSTIC.zip -d seed_unpacked
+          SEED=seed_unpacked/R13_NONLINEAR_U100_KN005_N32_20K_DIAGNOSTIC
+          test -s "$SEED/diagnostics/final_validation.json"
+          cp "$SEED/diagnostics/final_validation.json" diagnostics/seed20k_validation.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          seed=json.loads(Path('diagnostics/seed20k_validation.json').read_text())
+          assert seed['clean_stability_restart_checkpoint'] is True
+          assert seed['run_status']['last_checkpoint_step']==20000
+          assert abs(seed['run_status']['simulation_time']-0.2)<1e-10
+          assert seed['runtime']['marker_count']==0
+          assert seed['hdf5']['current_flow']['recursive_finite']
+          assert seed['hdf5']['current_flow']['positive_rho_p_t']
+          PY
+
+      - name: Reconstruct identical case and install exact 20k restart
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cp audited/rana2013_r13/make_rana2013_case.py continuation_make_case.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path=Path('continuation_make_case.py')
+          text=path.read_text()
+          assert text.count('ULID=50.0')==1
+          text=text.replace('ULID=50.0','ULID=100.0')
+          text=text.replace('exact Uwall=50 m/s','exact Uwall=100 m/s')
+          path.write_text(text)
+          PY
+          python3 continuation_make_case.py \
+            --template-case audited/template_case --output case \
+            --paper-kn 0.05 --grid-points 32 --maxstep 50000 \
+            --dt 2.5e-5 --checkpoint-every 1000
+          SEED=seed_unpacked/R13_NONLINEAR_U100_KN005_N32_20K_DIAGNOSTIC
+          cp "$SEED/current_hdf5/flowfield.h5" case/outdat/flowfield.h5
+          cp "$SEED/current_hdf5/auxiliary.h5" case/outdat/auxiliary.h5
+          python3 - <<'PY'
+          from pathlib import Path
+          import h5py,json,numpy as np
+          inp=next(Path('case/datin').glob('input.astr*'))
+          lines=inp.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# lrestar'):
+                  lines[i+1]='t'
+                  break
+          else: raise SystemExit('lrestar entry not found')
+          inp.write_text('\n'.join(lines)+'\n')
+          meta_path=Path('case/rana2013_case_metadata.json')
+          meta=json.loads(meta_path.read_text())
+          assert meta['dt_requested_upper_bound']==2.5e-5
+          assert meta['dt_grid_kn_cap']==1e-5 and meta['dt']==1e-5
+          meta.update({
+              'initial_state':'verified exact nonlinear R13 20k checkpoint',
+              'continuation_from_step':20000,
+              'continuation_from_time':0.20000000000005924,
+              'seed_run':29689596458,
+              'seed_artifact_id':8443346726,
+              'seed_artifact_digest':'sha256:2e3dbc26aa6277203d4021582269e685a01e6669f301255bd2ef5e5948c2f5f9',
+          })
+          meta_path.write_text(json.dumps(meta,indent=2)+'\n')
+          for path in (Path('case/outdat/flowfield.h5'),Path('case/outdat/auxiliary.h5')):
+              with h5py.File(path,'r') as h5:
+                  assert int(h5['nstep'][0])==20000
+                  bad=[]
+                  def visit(name,obj):
+                      if isinstance(obj,h5py.Dataset) and obj.dtype.kind in 'fc' and not np.isfinite(obj[...]).all(): bad.append(name)
+                  h5.visititems(visit)
+                  assert not bad
+          with h5py.File('case/outdat/flowfield.h5','r') as h5:
+              for key in ('ro','p','t'): assert np.min(h5[key][...])>0
+          PY
+
+      - name: Continue once from exact 20k to 50k and capture 48k-50k
+        shell: bash
+        env:
+          GFORTRAN_ERROR_BACKTRACE: '1'
+        run: |
+          set -u
+          mkdir -p diagnostics/checkpoints
+          export WALLCLOCK_MINUTES=330
+          bash audited/rana2013_r13/run_rana2013_case.sh \
+            "$PWD/case" "$PWD/audited/astr/build/bin/astr" \
+            "$PWD/audited/rana2013_r13/rana2013_reference.json" &
+          RUNNER_PID=$!
+          snapshot_checkpoint() {
+            python3 - <<'PY'
+          from pathlib import Path
+          import os,shutil,h5py
+          targets={48000,49000,50000}; out=Path('diagnostics/checkpoints')
+          for src in (Path('case/outdat/flowfield.h5'),Path('case/bakup/flowfield.h5')):
+              try:
+                  with h5py.File(src,'r') as h5: step=int(h5['nstep'][0])
+                  if step not in targets: continue
+                  dest=out/f'flowfield_{step}.h5'
+                  if dest.exists(): continue
+                  tmp=out/f'.flowfield_{step}.h5.tmp'; shutil.copyfile(src,tmp)
+                  with h5py.File(tmp,'r') as h5: copied=int(h5['nstep'][0])
+                  if copied!=step: tmp.unlink(missing_ok=True); continue
+                  os.replace(tmp,dest); print(f'captured exact checkpoint {step} from {src}')
+              except (OSError,KeyError,ValueError): pass
+          PY
+          }
+          while kill -0 "$RUNNER_PID" 2>/dev/null; do snapshot_checkpoint; sleep 2; done
+          set +e; wait "$RUNNER_PID"; RUN_RC=$?; set -e
+          snapshot_checkpoint
+          echo "runner_return_code=$RUN_RC" | tee diagnostics/runner_status.txt
+          test "$RUN_RC" -eq 0
+          test -s diagnostics/checkpoints/flowfield_48000.h5
+          test -s diagnostics/checkpoints/flowfield_49000.h5
+          test -s diagnostics/checkpoints/flowfield_50000.h5
+
+      - name: Validate matched-time endpoint, convergence, and AF metrics
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 diagnostics/analyze_r13_nonlinear_20k_to_50k.py \
+            --case case --snapshots-dir diagnostics/checkpoints \
+            --output diagnostics/final_validation_50k.json
+
+      - name: Package matched-time diagnostic evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uxo pipefail
+          ROOT=R13_NONLINEAR_U100_KN005_N32_20K_TO_50K_DIAGNOSTIC
+          mkdir -p "$ROOT/current_hdf5" "$ROOT/backup_hdf5" "$ROOT/audits"
+          cp -a diagnostics "$ROOT/" || true
+          cp -a case/rana2013_case_metadata.json case/analysis case/logs "$ROOT/" || true
+          cp -a case/outdat/*.h5 "$ROOT/current_hdf5/" || true
+          cp -a case/bakup/*.h5 "$ROOT/backup_hdf5/" || true
+          cp -a audited/audits/. "$ROOT/audits/" || true
+          cp -a audited/continuation_ldd.txt "$ROOT/audits/" || true
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload matched-time nonlinear R13 continuation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R13_NONLINEAR_U100_KN005_N32_20K_TO_50K_DIAGNOSTIC
+          path: |
+            R13_NONLINEAR_U100_KN005_N32_20K_TO_50K_DIAGNOSTIC.zip
+            R13_NONLINEAR_U100_KN005_N32_20K_TO_50K_DIAGNOSTIC.zip.sha256
+          compression-level: 0
+          retention-days: 14
