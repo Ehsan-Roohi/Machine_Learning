@@ -1,0 +1,1 @@
+Continue the validated ASTR R26 32x32 U=100 m/s cavity from step 2000 to 10000 in sequential 2000-step segments, validating and saving every checkpoint.
