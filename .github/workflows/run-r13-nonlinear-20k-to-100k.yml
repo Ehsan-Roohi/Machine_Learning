@@ -1,0 +1,200 @@
+name: Continue nonlinear R13 from validated 20k to 100k
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/run-r13-nonlinear-20k-to-100k.yml'
+      - 'diagnostics/analyze_r13_milestones.py'
+      - 'run-r13-nonlinear-20k-to-100k-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: r13-nonlinear-20k-to-100k-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  continue-r13-to-100k:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime and analysis dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openmpi-bin libopenmpi-dev libhdf5-openmpi-dev python3-h5py python3-numpy python3-scipy unzip zip time
+
+      - name: Download audited nonlinear R13 solver
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          run-id: 29673135273
+          github-token: ${{ github.token }}
+          path: audited
+
+      - name: Download validated R13 20k seed
+        uses: actions/download-artifact@v4
+        with:
+          name: R13_NONLINEAR_U100_KN005_N32_20K_DIAGNOSTIC
+          run-id: 29689596458
+          github-token: ${{ github.token }}
+          path: seed_artifact
+
+      - name: Restore and verify exact 20k restart state
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN="$PWD/audited/astr/build/bin/astr"
+          chmod 0755 "$BIN"
+          ldd "$BIN" | tee audited/continuation_ldd.txt
+          ! grep -Fq 'not found' audited/continuation_ldd.txt
+          INNER=$(find seed_artifact -type f -name 'R13_NONLINEAR_U100_KN005_N32_20K_DIAGNOSTIC.zip' -print -quit)
+          test -n "$INNER"
+          mkdir seed_unpacked
+          unzip -q "$INNER" -d seed_unpacked
+          SEED=$(find seed_unpacked -type d -name 'R13_NONLINEAR_U100_KN005_N32_20K_DIAGNOSTIC' -print -quit)
+          test -n "$SEED"
+          python3 - "$SEED" <<'PY'
+          import json,sys,h5py,numpy as np
+          from pathlib import Path
+          root=Path(sys.argv[1]); v=json.loads((root/'diagnostics/final_validation.json').read_text())
+          assert v['clean_stability_restart_checkpoint'] is True
+          assert v['run_status']['last_checkpoint_step']==20000
+          for name in ('current_hdf5/flowfield.h5','current_hdf5/auxiliary.h5'):
+              p=root/name; assert p.is_file()
+              with h5py.File(p,'r') as h:
+                  assert int(h['nstep'][0])==20000
+                  bad=[]
+                  h.visititems(lambda n,o: bad.append(n) if isinstance(o,h5py.Dataset) and o.dtype.kind in 'fc' and not np.isfinite(o[...]).all() else None)
+                  assert not bad,bad
+          print('Verified restartable R13 step-20000 seed')
+          PY
+          echo "$SEED" > seed_root.txt
+
+      - name: Reconstruct matched case and install restart
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SEED=$(cat seed_root.txt)
+          cp audited/rana2013_r13/make_rana2013_case.py continuation_make_case.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('continuation_make_case.py'); t=p.read_text()
+          assert t.count('ULID=50.0')==1
+          p.write_text(t.replace('ULID=50.0','ULID=100.0').replace('exact Uwall=50 m/s','exact Uwall=100 m/s'))
+          PY
+          python3 continuation_make_case.py --template-case audited/template_case --output case --paper-kn 0.05 --grid-points 32 --maxstep 100000 --dt 2.5e-5 --checkpoint-every 1000
+          python3 - "$SEED" <<'PY'
+          from pathlib import Path
+          import json,shutil,sys,h5py
+          seed=Path(sys.argv[1]); case=Path('case')
+          inp=next((case/'datin').glob('input.astr*')); lines=inp.read_text().splitlines()
+          for i,l in enumerate(lines):
+              if l.strip().startswith('# lrestar'): lines[i+1]='t'; break
+          else: raise RuntimeError('lrestar not found')
+          inp.write_text('\n'.join(lines)+'\n')
+          for d in ('outdat','bakup'):
+              (case/d).mkdir(exist_ok=True)
+          shutil.copy2(seed/'current_hdf5/flowfield.h5',case/'outdat/flowfield.h5')
+          shutil.copy2(seed/'current_hdf5/auxiliary.h5',case/'outdat/auxiliary.h5')
+          shutil.copy2(seed/'backup_hdf5/flowfield.h5',case/'bakup/flowfield.h5')
+          shutil.copy2(seed/'backup_hdf5/auxiliary.h5',case/'bakup/auxiliary.h5')
+          meta=json.loads((case/'rana2013_case_metadata.json').read_text()); meta['initial_state']='restart from validated nonlinear R13 step 20000'; meta['restart_seed_run']=29689596458; meta['restart_seed_time']=0.2
+          (case/'rana2013_case_metadata.json').write_text(json.dumps(meta,indent=2))
+          with h5py.File(case/'outdat/flowfield.h5','r') as h: assert int(h['nstep'][0])==20000
+          PY
+
+      - name: Continue through 40k 60k 80k and 100k
+        shell: bash
+        env:
+          GFORTRAN_ERROR_BACKTRACE: '1'
+        run: |
+          set -euxo pipefail
+          mkdir -p milestones/checkpoints milestones/segments
+          for TARGET in 40000 60000 80000 100000; do
+            python3 - "$TARGET" <<'PY'
+          import json,sys
+          from pathlib import Path
+          target=int(sys.argv[1]); case=Path('case')
+          ctrl=case/'datin/controller'; lines=ctrl.read_text().splitlines()
+          for i,l in enumerate(lines):
+              if l.strip().startswith('# maxstep,feqchkpt,feqwsequ,feqslice,feqlist,feqavg'):
+                  lines[i+1]=f'{target:9d},    1000,    1000,    1000,     500,   500'; break
+          else: raise RuntimeError('controller target line missing')
+          ctrl.write_text('\n'.join(lines)+'\n')
+          meta=json.loads((case/'rana2013_case_metadata.json').read_text()); meta['maxstep']=target; meta['pseudo_time_horizon']=meta['dt']*target
+          (case/'rana2013_case_metadata.json').write_text(json.dumps(meta,indent=2))
+          PY
+            export WALLCLOCK_MINUTES=330
+            bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$PWD/audited/astr/build/bin/astr" "$PWD/audited/rana2013_r13/rana2013_reference.json" &
+            PID=$!
+            snapshot() {
+              python3 - "$TARGET" <<'PY'
+          from pathlib import Path
+          import os,shutil,sys,h5py
+          target=int(sys.argv[1]); wanted={target-2000,target-1000,target}; out=Path('milestones/checkpoints')
+          for src in (Path('case/outdat/flowfield.h5'),Path('case/bakup/flowfield.h5')):
+              try:
+                  with h5py.File(src,'r') as h: step=int(h['nstep'][0])
+                  if step not in wanted: continue
+                  dst=out/f'flowfield_{step}.h5'
+                  if dst.exists(): continue
+                  tmp=out/f'.flowfield_{step}.tmp'; shutil.copyfile(src,tmp)
+                  with h5py.File(tmp,'r') as h: assert int(h['nstep'][0])==step
+                  os.replace(tmp,dst); print('captured',step)
+              except (OSError,KeyError,ValueError,AssertionError): pass
+          PY
+            }
+            while kill -0 "$PID" 2>/dev/null; do snapshot; sleep 2; done
+            wait "$PID"
+            snapshot
+            LABEL=$(printf 'step_%06d' "$TARGET")
+            mkdir -p "milestones/segments/$LABEL"
+            cp -a case/analysis case/logs "milestones/segments/$LABEL/"
+            cp case/outdat/flowfield.h5 case/outdat/auxiliary.h5 "milestones/segments/$LABEL/"
+            python3 - "$TARGET" <<'PY'
+          import h5py,numpy as np,sys
+          from pathlib import Path
+          t=int(sys.argv[1]); p=Path('case/outdat/flowfield.h5')
+          with h5py.File(p,'r') as h:
+              assert int(h['nstep'][0])==t
+              for k in ('ro','p','t'):
+                  a=np.asarray(h[k],float); assert np.isfinite(a).all() and a.min()>0
+              bad=[]; h.visititems(lambda n,o: bad.append(n) if isinstance(o,h5py.Dataset) and o.dtype.kind in 'fc' and not np.isfinite(o[...]).all() else None); assert not bad,bad
+          PY
+          done
+
+      - name: Analyze all milestones
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 diagnostics/analyze_r13_milestones.py --snapshots milestones/checkpoints --grid case/datin/grid.h5 --final-flow case/outdat/flowfield.h5 --output milestones/r13_40k_60k_80k_100k_validation.json
+
+      - name: Package restartable continuation
+        if: always()
+        shell: bash
+        run: |
+          set -uxo pipefail
+          ROOT=R13_NONLINEAR_U100_KN005_N32_20K_TO_100K
+          mkdir -p "$ROOT/final_case" "$ROOT/audits"
+          cp -a milestones "$ROOT/"
+          cp -a case/datin case/outdat case/bakup case/rana2013_case_metadata.json "$ROOT/final_case/"
+          cp -a audited/audits/. "$ROOT/audits/" || true
+          cp -a diagnostics/analyze_r13_milestones.py "$ROOT/"
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload R13 100k continuation artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R13_NONLINEAR_U100_KN005_N32_20K_TO_100K
+          path: |
+            R13_NONLINEAR_U100_KN005_N32_20K_TO_100K.zip
+            R13_NONLINEAR_U100_KN005_N32_20K_TO_100K.zip.sha256
+          compression-level: 0
+          retention-days: 14
