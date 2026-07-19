@@ -1,0 +1,178 @@
+name: Exact Rana 2013 nonlinear R13 benchmark suite
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'run-rana2013-r13-benchmark-trigger.txt'
+      - 'rana2013_r13/**'
+      - '.github/workflows/run-rana2013-r13-benchmark.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: rana2013-r13-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-build-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install compiler, MPI, HDF5 and analysis packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran cmake make openmpi-bin libopenmpi-dev libhdf5-openmpi-dev unzip zip python3-h5py python3-numpy python3-pandas python3-matplotlib
+      - name: Download verified ASTR source and cavity template
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: source_artifact
+      - name: Restore source and apply exact Rana equations
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INNER=$(find source_artifact -type f -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          mkdir restored
+          unzip -q "$INNER" -d restored
+          cp -a restored/astr ./astr
+          cp -a restored/case ./template_case
+          rm -rf astr/build
+          mkdir -p audits patches
+          python3 rana2013_r13/patch_rana2013_r13.py astr --report audits/formula_patch_report.json --patch-output patches/ASTR_RANA2013_R13_EXACT.patch
+          python3 rana2013_r13/audit_rana2013_formulas.py astr --output audits/formula_oracle_report.json
+      - name: Build exact Rana R13 source
+        run: |
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build -j 2
+          test -x astr/build/bin/astr
+      - name: Fresh equilibrium smoke gate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 rana2013_r13/make_rana2013_case.py --template-case template_case --output smoke_rana --paper-kn 0.0798 --grid-points 40 --maxstep 500 --dt 1.0e-5 --checkpoint-every 250
+          (cd smoke_rana && mpirun --oversubscribe -np 4 ../astr/build/bin/astr run datin/input.astr_r13_jfm > smoke.log 2>&1)
+          ! grep -q 'COMPUTATION CRASHED' smoke_rana/smoke.log
+          python3 rana2013_r13/analyze_rana2013_case.py smoke_rana --reference rana2013_r13/rana2013_reference.json --output-dir smoke_rana/analysis
+          python3 - <<'PY'
+          import h5py,numpy as np,json
+          with h5py.File('smoke_rana/outdat/flowfield.h5','r') as h:
+              assert int(h['nstep'][0])==500
+              for k in ['ro','p','t','u1','u2','qx','qy','sigmaxy','Rxy','Delta']:
+                  a=np.asarray(h[k]); assert np.isfinite(a).all(),k
+              for k in ['ro','p','t']: assert np.min(h[k][...])>0,k
+          d=json.load(open('smoke_rana/analysis/rana2013_summary.json'))
+          assert min(x['P_min'] for x in d['wall_equation_relative_residuals'].values())>0
+          PY
+      - name: Package audited executable and source
+        run: |
+          mkdir -p ASTR_RANA2013_R13_AUDITED
+          cp -a astr/src astr/build/bin/astr template_case rana2013_r13 audits patches RANA2013_R13_FORMULA_AUDIT.md ASTR_RANA2013_R13_AUDITED/
+          cp -a smoke_rana/analysis smoke_rana/smoke.log ASTR_RANA2013_R13_AUDITED/smoke_validation
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          path: ASTR_RANA2013_R13_AUDITED
+          compression-level: 6
+          retention-days: 14
+
+  paper-core:
+    needs: audit-build-smoke
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - {paper_kn: '0.010', tag: '0010'}
+          - {paper_kn: '0.071', tag: '0071'}
+          - {paper_kn: '0.0798', tag: '00798'}
+          - {paper_kn: '0.141', tag: '0141'}
+          - {paper_kn: '0.354', tag: '0354'}
+          - {paper_kn: '0.3989', tag: '03989'}
+          - {paper_kn: '0.707', tag: '0707'}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y openmpi-bin libopenmpi-dev python3-h5py python3-numpy zip
+      - uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          path: audited
+      - name: Generate exact paper case
+        run: |
+          python3 audited/rana2013_r13/make_rana2013_case.py --template-case audited/template_case --output case --paper-kn ${{ matrix.paper_kn }} --grid-points 75 --maxstep 100000 --dt 1.0e-5 --checkpoint-every 5000
+      - name: Run from equilibrium and analyze
+        id: solve
+        continue-on-error: true
+        env:
+          WALLCLOCK_MINUTES: 300
+        run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$PWD/audited/astr" "$PWD/audited/rana2013_r13/rana2013_reference.json"
+      - name: Package restartable result
+        if: always()
+        run: |
+          ROOT=RANA2013_R13_CORE_KN_${{ matrix.tag }}_N75
+          mkdir -p "$ROOT"
+          cp -a case "$ROOT/"
+          cp -a audited/audits audited/patches audited/RANA2013_R13_FORMULA_AUDIT.md "$ROOT/"
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: RANA2013_R13_CORE_KN_${{ matrix.tag }}_N75
+          path: |
+            RANA2013_R13_CORE_KN_${{ matrix.tag }}_N75.zip
+            RANA2013_R13_CORE_KN_${{ matrix.tag }}_N75.zip.sha256
+          compression-level: 0
+          retention-days: 14
+
+  paper-grid-study:
+    needs: audit-build-smoke
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        paper_kn: ['0.05', '0.10', '0.50']
+        grid_points: [40, 50, 75, 100, 200, 400]
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y openmpi-bin libopenmpi-dev python3-h5py python3-numpy zip
+      - uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          path: audited
+      - name: Generate exact mesh-study case
+        run: |
+          python3 audited/rana2013_r13/make_rana2013_case.py --template-case audited/template_case --output case --paper-kn ${{ matrix.paper_kn }} --grid-points ${{ matrix.grid_points }} --maxstep 100000 --dt 1.0e-5 --checkpoint-every 5000
+      - name: Run mesh case and retain last checkpoint
+        continue-on-error: true
+        env:
+          WALLCLOCK_MINUTES: 300
+        run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$PWD/audited/astr" "$PWD/audited/rana2013_r13/rana2013_reference.json"
+      - name: Package grid result
+        if: always()
+        run: |
+          KTAG=$(echo '${{ matrix.paper_kn }}' | tr -d '.')
+          ROOT=RANA2013_R13_GRID_KN_${KTAG}_N${{ matrix.grid_points }}
+          mkdir -p "$ROOT"
+          cp -a case "$ROOT/"
+          cp -a audited/audits audited/patches audited/RANA2013_R13_FORMULA_AUDIT.md "$ROOT/"
+          zip -r -4 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: RANA2013_R13_GRID_KN_${{ matrix.paper_kn }}_N${{ matrix.grid_points }}
+          path: |
+            RANA2013_R13_GRID_*.zip
+            RANA2013_R13_GRID_*.zip.sha256
+          compression-level: 0
+          retention-days: 14
