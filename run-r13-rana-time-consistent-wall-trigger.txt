@@ -1,0 +1,1 @@
+Trigger time-consistent wall-relaxation, physical-time lid-ramp, and unique-corner-owner diagnostics.
