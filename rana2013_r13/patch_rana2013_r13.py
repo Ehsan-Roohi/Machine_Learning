@@ -236,32 +236,22 @@ def main():
         raise RuntimeError(f'Expected three bare full-halo flow decodes, found {n4}')
     full_qsub='            call updatefvar(qsub,-hm,im+hm,-hm,jm+hm,-hm,km+hm)'
     full_q='          call updatefvar(q,-hm,im+hm,-hm,jm+hm,-hm,km+hm)'
-    qsub_axis_faces=(
-        '            ! Decode only initialized interior and axis-face halo slabs.\n'
-        '            call updatefvar(qsub,0,im,0,jm,0,km)\n'
-        '            if (hm>0) then\n'
-        '              call updatefvar(qsub,-hm,-1,0,jm,0,km)\n'
-        '              call updatefvar(qsub,im+1,im+hm,0,jm,0,km)\n'
-        '              call updatefvar(qsub,0,im,-hm,-1,0,km)\n'
-        '              call updatefvar(qsub,0,im,jm+1,jm+hm,0,km)\n'
-        '              call updatefvar(qsub,0,im,0,jm,-hm,-1)\n'
-        '              call updatefvar(qsub,0,im,0,jm,km+1,km+hm)\n'
-        '            endif')
-    q_axis_faces=(
-        '          ! Decode only initialized interior and axis-face halo slabs.\n'
-        '          call updatefvar(q,0,im,0,jm,0,km)\n'
-        '          if (hm>0) then\n'
-        '            call updatefvar(q,-hm,-1,0,jm,0,km)\n'
-        '            call updatefvar(q,im+1,im+hm,0,jm,0,km)\n'
-        '            call updatefvar(q,0,im,-hm,-1,0,km)\n'
-        '            call updatefvar(q,0,im,jm+1,jm+hm,0,km)\n'
-        '            call updatefvar(q,0,im,0,jm,-hm,-1)\n'
-        '            call updatefvar(q,0,im,0,jm,km+1,km+hm)\n'
-        '          endif')
+    qsub_interior=(
+        '            ! Decode physical cells; gradcal exchanges valid MPI faces.\n'
+        '            call updatefvar(qsub,0,im,0,jm,0,km)')
+    q_interior=(
+        '          ! Restore physical cells; the next RK stage rebuilds halos.\n'
+        '          call updatefvar(q,0,im,0,jm,0,km)')
     n5=ml1.count(full_qsub)+ml1.count(full_q)
     if n5!=2:
         raise RuntimeError(f'Expected two rectangular moment halo decodes, found {n5}')
-    ml1=ml1.replace(full_qsub,qsub_axis_faces,1).replace(full_q,q_axis_faces,1)
+    ml1=ml1.replace(full_qsub,qsub_interior,1).replace(full_q,q_interior,1)
+    grad_plain='            call gradcal(timerept=ltimrpt)'
+    grad_swap='            call gradcal(timerept=ltimrpt,dswap=.true.)'
+    n6=ml1.count(grad_plain)
+    if n6!=1:
+        raise RuntimeError(f'Expected one moment gradient call, found {n6}')
+    ml1=ml1.replace(grad_plain,grad_swap,1)
     cmake_anchor='target_link_libraries(astr)\n'
     fpe_trap=('if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")\n'
               '  target_compile_options(astr PRIVATE -ffpe-trap=invalid -fbacktrace)\n'
@@ -307,13 +297,14 @@ def main():
       'checkpoint_invariant_wall_solver':'checkpoint-invariant fixed-point iteration' in text,
       'gnu_invalid_trap_target':cmake1.count('target_compile_options(astr PRIVATE -ffpe-trap=invalid -fbacktrace)')==1,
       'interior_only_bare_flow_decode':n4==3 and not re.search(r'(?m)^\s*call updatefvar\(q\)\s*$',ml1),
-      'axis_face_moment_flow_decode':n5==2 and ml1.count('Decode only initialized interior and axis-face halo slabs.')==2 and full_qsub not in ml1 and full_q not in ml1,
+      'moment_interior_decode_with_face_swap':n5==2 and n6==1 and full_qsub not in ml1 and full_q not in ml1 and grad_swap in ml1,
     }
     report={'reference':'Rana, Torrilhon & Struchtrup, JCP 236 (2013), Eqs. (3),(4),(7),(13)',
             'model':'full nonlinear transformed Maxwell R13 Eq. (13), cadence-normalized checkpoint-invariant fixed-point iteration of exact Eq. (7)',
             'checks':checks,'methodmoment_lid_replacements':n2,'bc_lid_replacements':n3,
             'mainloop_interior_decode_replacements':n4,
-            'mainloop_axis_face_decode_replacements':n5,
+            'mainloop_moment_interior_decode_replacements':n5,
+            'mainloop_moment_gradient_swap_replacements':n6,
             'all_passed':all(checks.values())}
     a.report.parent.mkdir(parents=True,exist_ok=True); a.report.write_text(json.dumps(report,indent=2))
     print(json.dumps(report,indent=2))
