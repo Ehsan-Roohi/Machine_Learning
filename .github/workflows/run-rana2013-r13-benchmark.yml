@@ -222,7 +222,7 @@ jobs:
         env:
           WALLCLOCK_MINUTES: 60
         run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$PWD/audited/astr/build/bin/astr" "$PWD/audited/rana2013_r13/rana2013_reference.json"
-      - name: Require a finite anchor checkpoint before releasing the matrix
+      - name: Require a finite 5k cadence diagnostic checkpoint
         env:
           SOLVE_OUTCOME: ${{ steps.solve.outcome }}
         run: |
@@ -296,6 +296,8 @@ jobs:
           retention-days: 14
 
   paper-core:
+    # Scientific hold: a 5k stability pass is not a convergence/release gate.
+    if: ${{ false }}
     needs: [audit-build-smoke, paper-anchor]
     strategy:
       fail-fast: false
@@ -420,6 +422,9 @@ jobs:
           retention-days: 14
 
   paper-grid-study:
+    # Scientific hold: keep the full matrix locked until matched-time and
+    # sustained-convergence gates pass on the corrected anchor.
+    if: ${{ false }}
     needs: [audit-build-smoke, paper-anchor]
     strategy:
       fail-fast: false
