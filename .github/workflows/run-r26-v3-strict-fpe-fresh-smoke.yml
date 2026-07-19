@@ -94,6 +94,7 @@ jobs:
               'exact_conversion_bounds_density_finiteness_gate_present': 'ieee_is_finite(qint(iss:iee,jss:jee,kss:kee,1))' in re.sub(r'\s+', '', fludyna),
               'exact_conversion_bounds_density_positivity_gate_present': 'qint(iss:iee,jss:jee,kss:kee,1)<=0.d0' in re.sub(r'\s+', '', fludyna),
               'runtime_gate_marker_present': 'UPDATEFVAR_DENSITY_GATE' in fludyna,
+              'runtime_patch_does_not_import_parallel': 'use parallel' not in patch_text.lower(),
               'methodmoment_sha256_unchanged_by_runtime_patch': moment_before == hashlib.sha256(moment).hexdigest(),
               'mainloop_sha256_unchanged_by_runtime_patch': mainloop_before == hashlib.sha256(mainloop).hexdigest(),
               'runtime_patch_does_not_name_R26wbc_or_corner_logic': (
@@ -111,6 +112,7 @@ jobs:
               'exact_conversion_bounds_density_finiteness_gate_present',
               'exact_conversion_bounds_density_positivity_gate_present',
               'runtime_gate_marker_present',
+              'runtime_patch_does_not_import_parallel',
               'methodmoment_sha256_unchanged_by_runtime_patch',
               'mainloop_sha256_unchanged_by_runtime_patch',
               'runtime_patch_does_not_name_R26wbc_or_corner_logic',

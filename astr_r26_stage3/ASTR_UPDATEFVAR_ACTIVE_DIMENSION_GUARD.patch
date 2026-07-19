@@ -1,17 +1,16 @@
 --- fludyna.F90.orig
 +++ fludyna.F90
-@@ -192,7 +192,9 @@
+@@ -192,7 +192,8 @@
    subroutine updatefvar(qint,ibeg,iend,jbeg,jend,kbeg,kend)
      !
      use commarray,only : q,rho,vel,prs,tmp,spc
 -    use commvar,  only : im,jm,km,num_species,num_modequ,turbmode,hm,numq
 +    use commvar,  only : im,jm,km,num_species,num_modequ,turbmode,hm,numq,ndims
-+    use parallel, only : mpirank
 +    use, intrinsic :: ieee_arithmetic, only : ieee_is_finite
      !
      ! arguments
      real(8),intent(inout) :: qint(-hm:im+hm,-hm:jm+hm,-hm:km+hm,1:numq)
-@@ -214,6 +216,30 @@
+@@ -214,6 +215,30 @@
      if(present(kbeg)) kss=kbeg
      if(present(kend)) kee=kend
      !
@@ -30,8 +29,8 @@
 +    ! before division if their conservative density is invalid.
 +    if(any(.not.ieee_is_finite(qint(iss:iee,jss:jee,kss:kee,1))) .or. &
 +       any(qint(iss:iee,jss:jee,kss:kee,1)<=0.d0)) then
-+      write(*,*) 'UPDATEFVAR_DENSITY_GATE rank=',mpirank,              &
-+                 ' bounds=',iss,iee,jss,jee,kss,kee,                   &
++      write(*,*) 'UPDATEFVAR_DENSITY_GATE bounds=',                    &
++                 iss,iee,jss,jee,kss,kee,                              &
 +                 ' min=',minval(qint(iss:iee,jss:jee,kss:kee,1)),     &
 +                 ' nonpositive=',count(qint(iss:iee,jss:jee,kss:kee,1)<=0.d0), &
 +                 ' nonfinite=',count(.not.ieee_is_finite(             &
