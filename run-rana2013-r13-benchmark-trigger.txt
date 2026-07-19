@@ -1,0 +1,1 @@
+Apply and audit the transformed nonlinear Maxwell R13 equations and exact Rana et al. (2013) wall conditions, pass build and fresh-equilibrium smoke gates, then run all paper profile, table and mesh-study cases.
