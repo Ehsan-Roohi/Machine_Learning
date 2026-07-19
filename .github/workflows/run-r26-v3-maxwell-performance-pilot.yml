@@ -1,0 +1,379 @@
+name: R26 v3 Maxwell transport and MPI performance pilot
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'run-r26-v3-maxwell-performance-pilot-trigger.txt'
+      - 'diagnostics/patch_r26_maxwell_runtime.py'
+      - '.github/workflows/run-r26-v3-maxwell-performance-pilot.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: r26-v3-maxwell-performance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fresh-20k:
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        mpi_ranks: [1, 2, 4]
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler MPI HDF5 and analysis libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran cmake make patch openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev unzip zip python3-h5py python3-numpy python3-scipy
+
+      - name: Download verified ASTR source bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: source_artifact
+
+      - name: Restore source and apply audited R26 v3 plus Maxwell runtime patch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          INNER=$(find source_artifact -type f -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          test -n "$INNER"
+          mkdir source_restored audits diagnostics patches
+          unzip -q "$INNER" -d source_restored
+          cp -a source_restored/astr ./astr
+          cp -a source_restored/case ./template_case
+          rm -rf astr/build
+
+          python3 astr_r26_stage1/patch_r26_stage1.py astr \
+            --report audits/r26_stage1_source_audit.json \
+            --patch-output patches/ASTR_R26_STAGE1.patch
+          python3 astr_r26_stage2/patch_r26_nonlinear_sources.py astr \
+            --report audits/r26_nonlinear_source_v1_audit.json \
+            --patch-output patches/ASTR_R26_NONLINEAR_SOURCE_V1.patch
+          cp astr_r26_stage3/R26_FULL_BULK_CLOSURE_V3_portable.patch patches/
+          patch astr/src/methodmoment.F90 < astr_r26_stage3/R26_FULL_BULK_CLOSURE_V3_portable.patch
+
+          sed -i 's/\r$//' astr/src/fludyna.F90 astr/src/mainloop.F90
+          cp astr_r26_stage3/ASTR_UPDATEFVAR_ACTIVE_DIMENSION_GUARD.patch patches/
+          cp astr_r26_stage3/ASTR_UPDATEFVAR_PHYSICAL_DOMAIN_MPI_FACE_SWAP.patch patches/
+          patch astr/src/fludyna.F90 < astr_r26_stage3/ASTR_UPDATEFVAR_ACTIVE_DIMENSION_GUARD.patch
+          patch astr/src/mainloop.F90 < astr_r26_stage3/ASTR_UPDATEFVAR_PHYSICAL_DOMAIN_MPI_FACE_SWAP.patch
+
+          python3 diagnostics/patch_r26_maxwell_runtime.py astr \
+            --report audits/r26_maxwell_runtime_patch_report.json
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          reports=[
+              Path('audits/r26_stage1_source_audit.json'),
+              Path('audits/r26_nonlinear_source_v1_audit.json'),
+              Path('audits/r26_maxwell_runtime_patch_report.json'),
+          ]
+          for path in reports:
+              data=json.loads(path.read_text())
+              if 'all_passed' in data:
+                  assert data['all_passed'], (path,data)
+          print('source patch reports loaded and checked')
+          PY
+
+      - name: Build strict R26 v3 executable
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=OFF
+          cmake --build astr/build --verbose -j 2 2>&1 | tee diagnostics/build.log
+          BIN="$PWD/astr/build/bin/astr"
+          test -x "$BIN"
+          FLAGS=astr/build/src/CMakeFiles/astr.dir/flags.make
+          grep -F -- '-ffpe-trap=invalid' "$FLAGS"
+          grep -F -- '-fbacktrace' "$FLAGS"
+          grep -F -- '-g' "$FLAGS"
+          ldd "$BIN" | tee diagnostics/ldd.txt
+          ! grep -Fq 'not found' diagnostics/ldd.txt
+
+      - name: Generate fresh U100 Kn0.05 case and MPI layout
+        shell: bash
+        env:
+          MPI_RANKS: ${{ matrix.mpi_ranks }}
+        run: |
+          set -euxo pipefail
+          python3 astr_r26_stage1/make_r26_cavity_case.py \
+            --template-case template_case \
+            --output diagnostic_case \
+            --cells 32 \
+            --lid-speed-ms 100 \
+            --dt 2.5e-5 \
+            --maxstep 20000 \
+            --checkpoint-every 1000
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, os
+
+          ranks=int(os.environ['MPI_RANKS'])
+          case=Path('diagnostic_case')
+          controller=case/'datin/controller'
+          lines=controller.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# maxstep,feqchkpt,feqwsequ,feqslice,feqlist,feqavg'):
+                  values=[x.strip() for x in lines[i+1].split(',')]
+                  assert len(values)==6, values
+                  values[4]='1000'
+                  values[5]='1000'
+                  lines[i+1]=', '.join(values)
+                  break
+          else:
+              raise RuntimeError('controller output-cadence line not found')
+          controller.write_text('\n'.join(lines)+'\n')
+
+          if ranks==1:
+              ni,nj=1,1
+          elif ranks==2:
+              ni,nj=2,1
+          elif ranks==4:
+              ni,nj=2,2
+          else:
+              raise RuntimeError(ranks)
+          cells=32
+          if cells%ni or cells%nj:
+              raise RuntimeError('non-divisible decomposition')
+          li,lj=cells//ni,cells//nj
+          rows=[
+              '    isize     jsize     ksize',
+              f'{ni:9d}{nj:10d}{1:10d}',
+              '     Rank       Irk       Jrk       Krk        IM        JM        KM        I0        J0        K0',
+          ]
+          rank=0
+          for jr in range(nj):
+              for ir in range(ni):
+                  rows.append(
+                      f'{rank:9d}{ir:10d}{jr:10d}{0:10d}'
+                      f'{li:10d}{lj:10d}{0:10d}'
+                      f'{ir*li:10d}{jr*lj:10d}{0:10d}'
+                  )
+                  rank+=1
+          (case/'datin/parallel.info').write_text('\n'.join(rows)+'\n')
+
+          input_path=next((case/'datin').glob('input.astr*'))
+          text=input_path.read_text()
+          assert '\nf\n' in text, 'fresh-equilibrium gate failed'
+          meta=json.loads((case/'case_metadata.json').read_text())
+          meta.update({
+              'mpi_ranks':ranks,
+              'mpi_decomposition':[ni,nj,1],
+              'list_output_every':1000,
+              'runtime_patch':'Maxwell viscosity + physical-time lid ramp + horizontal-corner ownership',
+          })
+          (case/'case_metadata.json').write_text(json.dumps(meta,indent=2)+'\n')
+          print(json.dumps(meta,indent=2))
+          PY
+
+      - name: Run fresh 20k performance and stability pilot
+        id: solve
+        continue-on-error: true
+        shell: bash
+        env:
+          MPI_RANKS: ${{ matrix.mpi_ranks }}
+          GFORTRAN_ERROR_BACKTRACE: '1'
+        run: |
+          set -uo pipefail
+          mkdir -p diagnostics/checkpoints
+          cat > diagnostics/watch_selected_checkpoints.py <<'PY'
+          from pathlib import Path
+          import os, shutil, time
+          import h5py, numpy as np
+
+          case=Path('diagnostic_case')
+          out=Path('diagnostics/checkpoints')
+          targets={8000,17000,18000,19000,20000}
+          stop=Path('diagnostics/stop_watcher')
+          while True:
+              for src in [case/'bakup/flowfield.h5',case/'outdat/flowfield.h5']:
+                  try:
+                      with h5py.File(src,'r') as h:
+                          step=int(np.asarray(h['nstep']).reshape(-1)[0])
+                      if step not in targets:
+                          continue
+                      dest=out/f'step_{step:06d}.h5'
+                      if dest.exists():
+                          continue
+                      tmp=dest.with_suffix('.tmp.h5')
+                      shutil.copyfile(src,tmp)
+                      with h5py.File(tmp,'r') as h:
+                          copied=int(np.asarray(h['nstep']).reshape(-1)[0])
+                          finite=True
+                          def visit(name,obj):
+                              nonlocal finite
+                              if isinstance(obj,h5py.Dataset) and obj.dtype.kind in 'fc':
+                                  finite=finite and bool(np.isfinite(np.asarray(obj[...])).all())
+                          h.visititems(visit)
+                      if copied==step and finite:
+                          os.replace(tmp,dest)
+                          print(f'captured {step}',flush=True)
+                      else:
+                          tmp.unlink(missing_ok=True)
+                  except Exception as exc:
+                      print(f'retry {src}: {exc!r}',flush=True)
+              if stop.exists():
+                  break
+              time.sleep(10)
+          PY
+
+          python3 -u diagnostics/watch_selected_checkpoints.py \
+            > diagnostics/checkpoint_watcher.log 2>&1 &
+          WATCHER_PID=$!
+          INPUT=$(basename "$(find diagnostic_case/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+          START=$(date +%s)
+          set +e
+          (
+            cd diagnostic_case
+            timeout --preserve-status 330m mpirun --oversubscribe -np "$MPI_RANKS" \
+              ../astr/build/bin/astr run "datin/$INPUT" \
+              > ../diagnostics/runtime.log 2>&1
+          )
+          RC=$?
+          set -e
+          END=$(date +%s)
+          printf '%s\n' "$RC" > diagnostics/runtime_rc.txt
+          printf '%s\n' "$((END-START))" > diagnostics/elapsed_seconds.txt
+          touch diagnostics/stop_watcher
+          wait "$WATCHER_PID" || true
+          tail -n 160 diagnostics/runtime.log || true
+          find diagnostics/checkpoints -type f -printf '%f %s bytes\n' | sort || true
+
+      - name: Analyze actual checkpoint, runtime markers, and performance
+        if: always()
+        shell: bash
+        env:
+          MPI_RANKS: ${{ matrix.mpi_ranks }}
+          SOLVE_OUTCOME: ${{ steps.solve.outcome }}
+        run: |
+          set -uxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, os, re
+          import h5py, numpy as np
+
+          case=Path('diagnostic_case')
+          log=Path('diagnostics/runtime.log').read_text(errors='replace') if Path('diagnostics/runtime.log').exists() else ''
+          rc=int(Path('diagnostics/runtime_rc.txt').read_text().strip()) if Path('diagnostics/runtime_rc.txt').exists() else None
+          elapsed=int(Path('diagnostics/elapsed_seconds.txt').read_text().strip()) if Path('diagnostics/elapsed_seconds.txt').exists() else None
+          markers={name:len(re.findall(pattern,log,re.I)) for name,pattern in {
+              'MAXWELL_VISCOSITY_T_FAILURE':r'MAXWELL_VISCOSITY_T_FAILURE',
+              'SIGFPE':r'SIGFPE',
+              'IEEE_INVALID_FLAG':r'IEEE_INVALID_FLAG',
+              'floating_point_exception':r'Floating-point exception',
+              'UPDATEFVAR_DENSITY_GATE':r'UPDATEFVAR_DENSITY_GATE',
+              'NaN':r'(?<![A-Za-z])NaN(?![A-Za-z])',
+              'Inf':r'(?<![A-Za-z])[-+]?Inf(?:inity)?(?![A-Za-z])',
+          }.items()}
+
+          def inspect(path):
+              result={'path':str(path),'exists':path.exists()}
+              if not path.exists():
+                  return result
+              bad=[]
+              with h5py.File(path,'r') as h:
+                  result['nstep']=int(np.asarray(h['nstep']).reshape(-1)[0])
+                  result['time']=float(np.asarray(h['time']).reshape(-1)[0])
+                  def visit(name,obj):
+                      if isinstance(obj,h5py.Dataset) and obj.dtype.kind in 'fc':
+                          if not np.isfinite(np.asarray(obj[...])).all():
+                              bad.append(name)
+                  h.visititems(visit)
+                  result['field_ranges']={}
+                  for key in ('ro','p','t'):
+                      values=np.asarray(h[key],float)
+                      result['field_ranges'][key]={'min':float(values.min()),'max':float(values.max())}
+                  result['all_floating_finite']=not bad
+                  result['nonfinite_datasets']=bad
+                  result['positive_rho_p_T']=all(result['field_ranges'][key]['min']>0 for key in ('ro','p','t'))
+              return result
+
+          current=inspect(case/'outdat/flowfield.h5')
+          backup=inspect(case/'bakup/flowfield.h5')
+          actual=current.get('nstep')
+          steps_per_second=(actual/elapsed) if actual is not None and elapsed else None
+          seconds_per_1000=(1000/steps_per_second) if steps_per_second else None
+          selected=sorted(int(path.stem.split('_')[-1]) for path in Path('diagnostics/checkpoints').glob('step_*.h5'))
+          complete=(
+              rc==0 and actual==20000
+              and current.get('all_floating_finite')
+              and current.get('positive_rho_p_T')
+              and sum(markers.values())==0
+          )
+          report={
+              'mpi_ranks':int(os.environ['MPI_RANKS']),
+              'target_step':20000,
+              'actual_step':actual,
+              'solver_return_code':rc,
+              'solve_step_outcome':os.environ.get('SOLVE_OUTCOME'),
+              'elapsed_seconds':elapsed,
+              'steps_per_second':steps_per_second,
+              'seconds_per_1000_steps':seconds_per_1000,
+              'selected_checkpoint_steps':selected,
+              'current':current,
+              'backup':backup,
+              'runtime_markers':markers,
+              'clean_20k_performance_pilot':bool(complete),
+              'scientific_status':(
+                  'fresh Maxwell R26-v3 performance/stability pilot; relaxed wall-memory arrays remain un-serialized, '
+                  'and full component-wise equations (19)-(26) audit remains a publication hold'
+              ),
+          }
+          Path('diagnostics/performance_verdict.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report,indent=2))
+          PY
+
+      - name: Package rank-specific evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uxo pipefail
+          ROOT=R26_V3_MAXWELL_MPI${{ matrix.mpi_ranks }}_FRESH_20K
+          mkdir -p "$ROOT/source" "$ROOT/current" "$ROOT/backup" "$ROOT/input"
+          cp -a audits diagnostics patches "$ROOT/" || true
+          cp -a diagnostic_case/case_metadata.json "$ROOT/" || true
+          cp -a diagnostic_case/datin/. "$ROOT/input/" || true
+          cp -a diagnostic_case/outdat/*.h5 "$ROOT/current/" || true
+          cp -a diagnostic_case/bakup/*.h5 "$ROOT/backup/" || true
+          cp -a astr/src/methodmoment.F90 astr/src/fludyna.F90 astr/src/bc.F90 \
+            astr/src/mainloop.F90 "$ROOT/source/" || true
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload rank-specific performance artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R26_V3_MAXWELL_MPI${{ matrix.mpi_ranks }}_FRESH_20K
+          path: |
+            R26_V3_MAXWELL_MPI${{ matrix.mpi_ranks }}_FRESH_20K.zip
+            R26_V3_MAXWELL_MPI${{ matrix.mpi_ranks }}_FRESH_20K.zip.sha256
+          compression-level: 0
+          retention-days: 14
+
+      - name: Require clean 20k result
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('diagnostics/performance_verdict.json').read_text())
+          if not report['clean_20k_performance_pilot']:
+              raise SystemExit(json.dumps(report,indent=2))
+          print('clean R26-v3 20k pilot passed')
+          PY
