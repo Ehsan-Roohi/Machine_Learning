@@ -6,6 +6,13 @@ EXE=${2:?ASTR executable}
 REFERENCE=${3:?reference JSON}
 WALLCLOCK_MINUTES=${WALLCLOCK_MINUTES:-300}
 OUT=${OUT:-"${CASE}/analysis"}
+
+# actions/upload-artifact/download-artifact does not preserve executable bits.
+# Restore the audited binary permission explicitly before every production run.
+EXE=$(readlink -f "$EXE")
+chmod +x "$EXE"
+test -x "$EXE"
+
 mkdir -p "$OUT" "${CASE}/logs"
 INPUT=$(basename "$(find "$CASE/datin" -maxdepth 1 -name 'input.astr*' -print -quit)")
 RANKS=$(python3 - "$CASE/rana2013_case_metadata.json" <<'PY'
