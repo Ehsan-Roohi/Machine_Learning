@@ -1,0 +1,545 @@
+name: R26 v3 strict-FPE fresh-equilibrium diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/r26-v3-strict-fpe-smoke
+    paths:
+      - '.github/workflows/run-r26-v3-strict-fpe-fresh-smoke.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: r26-v3-strict-fpe-fresh-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  strict-fpe-fresh-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and diagnostic libraries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran cmake make patch openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev unzip zip python3-h5py python3-numpy
+
+      - name: Download verified ASTR source bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: source_artifact
+
+      - name: Restore pristine source and template case
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SOURCE_INNER=$(find source_artifact -type f -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          test -n "$SOURCE_INNER"
+          mkdir source_restored
+          unzip -q "$SOURCE_INNER" -d source_restored
+          cp -a source_restored/astr ./astr
+          cp -a source_restored/case ./template_case
+          rm -rf astr/build
+          mkdir -p audits diagnostics patches
+
+      - name: Apply the same term-by-term audited R26 v3 patches
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 astr_r26_stage1/patch_r26_stage1.py astr \
+            --report audits/r26_stage1_source_audit.json \
+            --patch-output patches/ASTR_R26_STAGE1.patch
+          python3 astr_r26_stage2/patch_r26_nonlinear_sources.py astr \
+            --report audits/r26_nonlinear_source_v1_audit.json \
+            --patch-output patches/ASTR_R26_NONLINEAR_SOURCE_V1.patch
+          cp astr_r26_stage3/R26_FULL_BULK_CLOSURE_V3_portable.patch patches/
+          patch astr/src/methodmoment.F90 < astr_r26_stage3/R26_FULL_BULK_CLOSURE_V3_portable.patch
+
+          python3 - <<'PY_AUDIT'
+          from pathlib import Path
+          import itertools
+          import json
+          import re
+          import numpy as np
+
+          text = Path('astr/src/methodmoment.F90').read_text()
+          checks = {
+              'Apsi1_correct': 'Apsi1=1.698d0' in text,
+              'nonlinear_M_enabled': bool(re.search(r'subroutine\s+src_mijk_B.*?if \(\.true\.\) then\s*! R26 nonlinear source', text, re.S | re.I)),
+              'nonlinear_S_enabled': bool(re.search(r'subroutine\s+src_rij_B.*?if \(\.true\.\) then\s*! R26 nonlinear source', text, re.S | re.I)),
+              'nonlinear_N_enabled': bool(re.search(r'subroutine\s+src_delta.*?if \(\.true\.\) then\s*! R26 nonlinear source', text, re.S | re.I)),
+              'full_phi_23_24_active': 'call r26_full_phi_closure()' in text and 'c2=0.291d0' in text.lower(),
+              'full_psi_23_25_active': 'call r26_full_psi_closure()' in text and 'y2=1.203d0' in text.lower() and 'y3=0.854d0' in text.lower(),
+              'eq25_mijk_divergence_pair_exact': '+8.d0*mm(a,b,c)*divu' in text and '-6.d0*mm(a,b,c)*divu' in text,
+              'eq25_wrong_oriented_minus6_absent': '-6.d0*mm(a,b,e)*gu(c,e)' not in text,
+              'eq25_Y2_Y3_outer_minus_exact': '-y2/(y1*rhov)*s6-y3/(y1*rhov)*s7' in text,
+              'full_omega_23_26_active': 'call r26_full_omega_closure()' in text,
+              'eq26_Rij_grad_sigma_only': 't6=t6+rr(a,b)*divs(b)' in text and 'gp(b)+divs(b)' not in text,
+              'quotient_gradients_present': all(x in text for x in [
+                  'mm(a,b,c)*grho(d)/(rhov*rhov)',
+                  'rr(a,b)*grho(c)/(rhov*rhov)',
+                  'delv*grho(a)/(rhov*rhov)',
+              ]),
+              'ad_hoc_omega_0p1_removed': '*0.1d0' not in text[text.find('subroutine diffu_delta'):text.find('end subroutine diffu_delta')],
+              'r13_delta_dqz_typo_fixed': (
+                  'dqy(0:im,0:jm,0:km,3)' not in text[text.find('subroutine deltacal'):text.find('end subroutine deltacal')]
+                  and 'dqz(0:im,0:jm,0:km,3)' in text
+              ),
+              'relaxed_wbc_unchanged': 'deltatp = subdeltat' in text and 'deltatt = subdeltat' in text,
+          }
+
+          def sym(a):
+              axes = range(a.ndim)
+              out = np.zeros_like(a, dtype=float)
+              perms = list(itertools.permutations(axes))
+              for idx in np.ndindex(a.shape):
+                  out[idx] = np.mean([a[tuple(idx[p] for p in perm)] for perm in perms])
+              return out
+
+          def stf3(a):
+              s = sym(a)
+              tr = np.einsum('iik->k', s)
+              d = np.eye(3)
+              return s - (
+                  np.einsum('ij,k->ijk', d, tr)
+                  + np.einsum('ik,j->ijk', d, tr)
+                  + np.einsum('jk,i->ijk', d, tr)
+              ) / 5
+
+          def stf4(a):
+              s = sym(a)
+              b = np.einsum('mmkl->kl', s)
+              c = np.trace(b)
+              d = np.eye(3)
+              return s - (
+                  np.einsum('ij,kl->ijkl', d, b)
+                  + np.einsum('ik,jl->ijkl', d, b)
+                  + np.einsum('il,jk->ijkl', d, b)
+                  + np.einsum('jk,il->ijkl', d, b)
+                  + np.einsum('jl,ik->ijkl', d, b)
+                  + np.einsum('kl,ij->ijkl', d, b)
+              ) / 7 + (
+                  np.einsum('ij,kl->ijkl', d, d)
+                  + np.einsum('ik,jl->ijkl', d, d)
+                  + np.einsum('il,jk->ijkl', d, d)
+              ) * c / 35
+
+          rng = np.random.default_rng(20260719)
+          errors = {'stf3_trace_max': 0.0, 'stf4_trace_max': 0.0}
+          for _ in range(20):
+              errors['stf3_trace_max'] = max(
+                  errors['stf3_trace_max'],
+                  float(np.max(np.abs(np.einsum('iik->k', stf3(rng.normal(size=(3, 3, 3))))))),
+              )
+              errors['stf4_trace_max'] = max(
+                  errors['stf4_trace_max'],
+                  float(np.max(np.abs(np.einsum('iikl->kl', stf4(rng.normal(size=(3, 3, 3, 3))))))),
+              )
+
+          bulk_names = [name for name in checks if name != 'relaxed_wbc_unchanged']
+          required = all(checks[name] for name in bulk_names) and all(value < 1e-11 for value in errors.values())
+          report = {
+              'reference': 'Gu & Emerson, JFM 636 (2009), equations (16)-(26) and Appendix C',
+              'static_checks': checks,
+              'tensor_projection_oracle': errors,
+              'all_required_bulk_checks_passed': required,
+              'boundary_status': 'Existing relaxed wall map retained exactly for diagnosis; this workflow makes no physical correction.',
+              'model_label': 'Maxwell R26 full-bulk-closure v3, term-by-term audited, existing relaxed WBC',
+          }
+          Path('audits/r26_v3_term_by_term_audit.json').write_text(json.dumps(report, indent=2) + '\n')
+          print(json.dumps(report, indent=2))
+          if not required:
+              raise SystemExit(2)
+          PY_AUDIT
+
+      - name: Audit wall relaxation, checkpoint cadence, and corner ownership
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY_WALL'
+          from pathlib import Path
+          import json
+          import re
+
+          source_path = Path('astr/src/methodmoment.F90')
+          source = source_path.read_text()
+          rw = Path('astr/src/readwrite.F90').read_text()
+          hdf = Path('astr/src/hdf5io.F90').read_text()
+
+          def section(start, end):
+              i = source.lower().find(start.lower())
+              j = source.lower().find(end.lower(), i)
+              if i < 0 or j < 0:
+                  raise RuntimeError(f'missing source section: {start} ... {end}')
+              return source[i:j + len(end)]
+
+          def line_numbers(pattern, text=source, flags=0):
+              rx = re.compile(pattern, flags)
+              return [text.count('\n', 0, m.start()) + 1 for m in rx.finditer(text)]
+
+          r26 = section('subroutine R26wbc(', 'end  subroutine R26wbc')
+          wall = section('subroutine MOM_wall_boundary(ndir)', 'end subroutine MOM_wall_boundary')
+          wall_arrays = [
+              'sig_ttbc12', 'sig_nnbc12', 'sig_tsbc12', 'qtbc12', 'qsbc12',
+              'm_tttbc12', 'm_sssbc12', 'm_nntbc12', 'm_nnsbc12', 'm_ntsbc12',
+              'r_ttbc12', 'r_nnbc12', 'r_tsbc12', 'delbc12',
+          ]
+          serialized = {name: (name.lower() in (rw + hdf).lower()) for name in wall_arrays}
+          report = {
+              'scope': 'read-only source audit; no corner convention or wall-law modification is applied',
+              'relaxation': {
+                  'r26_deltatp_is_subdeltat': bool(re.search(r'deltatp\s*=\s*subdeltat', r26, re.I)),
+                  'r26_deltatt_is_subdeltat': bool(re.search(r'deltatt\s*=\s*subdeltat', r26, re.I)),
+                  'default_subdeltat_is_0p1_deltat': bool(re.search(r'subdeltat\s*=\s*0\.1d0\s*\*\s*deltat', rw, re.I)),
+                  'wall_updates_using_deltatp_count': len(re.findall(r'\*\s*deltatp\b', r26, re.I)),
+                  'wall_updates_using_deltatt_count': len(re.findall(r'\*\s*deltatt\b', r26, re.I)),
+                  'source_lines_deltatp_assignment': line_numbers(r'deltatp\s*=\s*subdeltat', flags=re.I),
+                  'source_lines_deltatt_assignment': line_numbers(r'deltatt\s*=\s*subdeltat', flags=re.I),
+                  'finding': 'The wall-memory map relaxation factor scales with subdeltat (default 0.1*deltat); changing dt changes relaxation per RK wall-map call.',
+              },
+              'checkpoint_and_restart': {
+                  'feqchkpt_directly_referenced_inside_R26wbc': 'feqchkpt' in r26.lower(),
+                  'wall_memory_arrays_serialized_by_name': serialized,
+                  'all_audited_wall_memory_arrays_absent_from_hdf5_io': not any(serialized.values()),
+                  'finding': 'Checkpoint frequency does not directly enter R26wbc, but the audited wall-memory arrays are not serialized by name; segmented restart cadence can therefore reset hidden wall state and alter a trajectory.',
+              },
+              'corner': {
+                  'wall_faces_called_in_fixed_order_1_through_6': bool(re.search(r'do\s+n\s*=\s*1\s*,\s*6.*?call\s+MOM_wall_boundary\s*\(n\)', source, re.S | re.I)),
+                  'vertical_face_loops_include_both_corner_endpoints': len(re.findall(r'do\s+j\s*=\s*0\s*,\s*jm', wall, re.I)) >= 2,
+                  'horizontal_face_loops_include_both_corner_endpoints': len(re.findall(r'do\s+i\s*=\s*0\s*,\s*im', wall, re.I)) >= 2,
+                  'r26_called_from_all_four_2d_face_branches': len(re.findall(r'call\s+R26wbc\s*\(', wall, re.I)) == 4,
+                  'explicit_corner_reconciliation_implemented': False,
+                  'finding': 'Each 2-D geometric corner is visited by a vertical and a horizontal face map in fixed face order. Separate per-face wall memories exist, while shared cell moments can be overwritten twice; this is a double-owner/order-dependence risk, not a selected physical convention.',
+              },
+              'scientific_status': 'diagnostic only; no claim of steady convergence, paper-exact corner treatment, or publication readiness',
+          }
+          required = [
+              report['relaxation']['r26_deltatp_is_subdeltat'],
+              report['relaxation']['r26_deltatt_is_subdeltat'],
+              report['relaxation']['default_subdeltat_is_0p1_deltat'],
+              report['relaxation']['wall_updates_using_deltatp_count'] > 0,
+              report['relaxation']['wall_updates_using_deltatt_count'] > 0,
+              report['corner']['wall_faces_called_in_fixed_order_1_through_6'],
+              report['corner']['vertical_face_loops_include_both_corner_endpoints'],
+              report['corner']['horizontal_face_loops_include_both_corner_endpoints'],
+              report['corner']['r26_called_from_all_four_2d_face_branches'],
+          ]
+          report['audit_complete'] = all(required)
+          Path('audits/wall_relaxation_restart_corner_audit.json').write_text(json.dumps(report, indent=2) + '\n')
+          Path('diagnostics/r26wbc_source_excerpt.F90').write_text(r26 + '\n')
+          Path('diagnostics/mom_wall_boundary_source_excerpt.F90').write_text(wall + '\n')
+          print(json.dumps(report, indent=2))
+          if not report['audit_complete']:
+              raise SystemExit(3)
+          PY_WALL
+
+      - name: Build with strict invalid trap and backtrace
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S astr -B astr/build \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DBUILD_TESTING=OFF \
+            '-DCMAKE_Fortran_FLAGS=-ffpe-trap=invalid -fbacktrace -fno-omit-frame-pointer' \
+            '-DCMAKE_Fortran_FLAGS_RELWITHDEBINFO=-O2 -g -ffpe-trap=invalid -fbacktrace -fno-omit-frame-pointer' \
+            2>&1 | tee diagnostics/cmake_configure.log
+          cmake --build astr/build --verbose -j 2 2>&1 | tee diagnostics/build.log
+          test -x astr/build/bin/astr
+          python3 - <<'PY_FLAGS'
+          from pathlib import Path
+          import json
+
+          texts = [Path('diagnostics/build.log').read_text()]
+          flag_files = sorted(Path('astr/build').rglob('flags.make'))
+          texts.extend(path.read_text(errors='replace') for path in flag_files)
+          combined = '\n'.join(texts)
+          report = {
+              'ffpe_trap_invalid_present_in_real_build_inputs': '-ffpe-trap=invalid' in combined,
+              'fbacktrace_present_in_real_build_inputs': '-fbacktrace' in combined,
+              'debug_symbols_requested': '-g' in combined,
+              'inspected_flag_files': [str(path) for path in flag_files],
+          }
+          report['strict_build_gate_passed'] = all(report[key] for key in [
+              'ffpe_trap_invalid_present_in_real_build_inputs',
+              'fbacktrace_present_in_real_build_inputs',
+              'debug_symbols_requested',
+          ])
+          Path('diagnostics/build_flag_gate.json').write_text(json.dumps(report, indent=2) + '\n')
+          print(json.dumps(report, indent=2))
+          if not report['strict_build_gate_passed']:
+              raise SystemExit(4)
+          PY_FLAGS
+
+      - name: Generate fresh-equilibrium U100 Kn=0.05 diagnostic case
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 astr_r26_stage1/make_r26_cavity_case.py \
+            --template-case template_case \
+            --output diagnostic_case \
+            --cells 32 \
+            --lid-speed-ms 100 \
+            --dt 2.5e-5 \
+            --maxstep 2000 \
+            --checkpoint-every 100
+          python3 - <<'PY_CASE'
+          from pathlib import Path
+          import json
+
+          metadata = json.loads(Path('diagnostic_case/case_metadata.json').read_text())
+          assert metadata['moment_model'].lower() == 'r26'
+          assert metadata['maxstep'] == 2000
+          assert abs(metadata['computed_knudsen'] - 0.05) < 1e-12
+          assert metadata['lid_speed_ms'] == 100.0
+          input_path = next(Path('diagnostic_case/datin').glob('input.astr*'))
+          assert '\nf\n' in input_path.read_text(), 'fresh-equilibrium lrestar=false gate failed'
+          Path('diagnostics/case_gate.json').write_text(json.dumps({
+              'fresh_equilibrium': True,
+              'target_step': 2000,
+              'cells': 32,
+              'lid_speed_ms': 100.0,
+              'computed_knudsen': metadata['computed_knudsen'],
+              'dt': metadata['dt'],
+              'checkpoint_every': 100,
+          }, indent=2) + '\n')
+          PY_CASE
+
+      - name: Run strict-FPE fresh smoke and preserve solver return code
+        shell: bash
+        run: |
+          set -uo pipefail
+          INPUT=$(basename "$(find diagnostic_case/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+          set +e
+          (
+            cd diagnostic_case
+            timeout --preserve-status 45m mpirun --oversubscribe -np 4 \
+              ../astr/build/bin/astr run "datin/${INPUT}" \
+              > ../diagnostics/runtime.log 2>&1
+          )
+          RC=$?
+          set -e
+          printf '%s\n' "$RC" > diagnostics/runtime_rc.txt
+          echo "solver return code: $RC"
+          tail -n 120 diagnostics/runtime.log || true
+
+      - name: Locate first runtime invalid marker and backtrace
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY_RUNTIME'
+          from pathlib import Path
+          import json
+          import re
+
+          log_path = Path('diagnostics/runtime.log')
+          text = log_path.read_text(errors='replace') if log_path.exists() else ''
+          lines = text.splitlines()
+          patterns = {
+              'IEEE_INVALID_FLAG': re.compile(r'IEEE_INVALID_FLAG', re.I),
+              'SIGFPE': re.compile(r'SIGFPE', re.I),
+              'floating_point_exception': re.compile(r'Floating-point exception', re.I),
+              'rana_pressure_failure': re.compile(r'RANA_P_FAILURE', re.I),
+              'computation_crashed': re.compile(r'COMPUTATION CRASHED', re.I),
+              'nan_token': re.compile(r'(?<![A-Za-z])NaN(?![A-Za-z])', re.I),
+              'inf_token': re.compile(r'(?<![A-Za-z])[-+]?Inf(?:inity)?(?![A-Za-z])', re.I),
+          }
+          hits = []
+          counts = {}
+          for name, pattern in patterns.items():
+              indices = [i for i, line in enumerate(lines) if pattern.search(line)]
+              counts[name] = len(indices)
+              hits.extend((i, name) for i in indices)
+          hits.sort()
+          first = hits[0] if hits else None
+          if first:
+              i, name = first
+              lo = max(0, i - 25)
+              hi = min(len(lines), i + 35)
+              context = '\n'.join(f'{j + 1:08d}: {lines[j]}' for j in range(lo, hi)) + '\n'
+              Path('diagnostics/first_runtime_marker.txt').write_text(context)
+          else:
+              name = None
+              i = None
+              Path('diagnostics/first_runtime_marker.txt').write_text('No configured runtime invalid marker found.\n')
+          backtrace = bool(re.search(r'Backtrace for this error|^#\d+| at .*\.F90', text, re.I | re.M))
+          rc = int(Path('diagnostics/runtime_rc.txt').read_text().strip())
+          report = {
+              'solver_return_code': rc,
+              'marker_counts': counts,
+              'total_marker_lines': sum(counts.values()),
+              'first_marker_name': name,
+              'first_marker_line': None if i is None else i + 1,
+              'backtrace_detected': backtrace,
+              'interpretation': (
+                  'strict runtime marker detected; first context preserved for source localization'
+                  if hits else 'no configured runtime invalid marker detected during this finite smoke horizon'
+              ),
+          }
+          Path('diagnostics/runtime_marker_gate.json').write_text(json.dumps(report, indent=2) + '\n')
+          print(json.dumps(report, indent=2))
+          PY_RUNTIME
+
+      - name: Recursively gate current and backup HDF5 data
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY_HDF5'
+          from pathlib import Path
+          import json
+          import h5py
+          import numpy as np
+
+          case = Path('diagnostic_case')
+          rc = int(Path('diagnostics/runtime_rc.txt').read_text().strip())
+          paths = sorted((case / 'outdat').glob('*.h5')) + sorted((case / 'bakup').glob('*.h5'))
+          files = {}
+          all_finite = True
+          all_positive = True
+          for path in paths:
+              relative = str(path.relative_to(case))
+              record = {'floating_datasets': {}, 'positive_fields': {}, 'errors': []}
+              try:
+                  with h5py.File(path, 'r') as h:
+                      finite_flags = []
+                      def visit(name, obj):
+                          if isinstance(obj, h5py.Dataset) and np.issubdtype(obj.dtype, np.floating):
+                              values = np.asarray(obj[...])
+                              finite = bool(np.isfinite(values).all())
+                              finite_flags.append(finite)
+                              record['floating_datasets'][name] = {
+                                  'finite': finite,
+                                  'shape': list(values.shape),
+                              }
+                      h.visititems(visit)
+                      all_finite = all_finite and all(finite_flags)
+                      if path.name == 'flowfield.h5':
+                          for name in ['ro', 'p', 't']:
+                              if name not in h:
+                                  record['errors'].append(f'missing positive field {name}')
+                                  all_positive = False
+                                  continue
+                              values = np.asarray(h[name][...])
+                              positive = bool(np.isfinite(values).all() and np.all(values > 0.0))
+                              record['positive_fields'][name] = {
+                                  'positive': positive,
+                                  'minimum': float(np.nanmin(values)),
+                                  'maximum': float(np.nanmax(values)),
+                              }
+                              all_positive = all_positive and positive
+                          if 'nstep' in h:
+                              record['nstep'] = int(np.asarray(h['nstep'][...]).reshape(-1)[0])
+                          if 'time' in h:
+                              record['time'] = float(np.asarray(h['time'][...]).reshape(-1)[0])
+              except Exception as exc:
+                  record['errors'].append(repr(exc))
+                  all_finite = False
+                  all_positive = False
+              files[relative] = record
+
+          required_paths = {
+              'outdat/flowfield.h5', 'outdat/auxiliary.h5',
+              'bakup/flowfield.h5', 'bakup/auxiliary.h5',
+          }
+          current_step = files.get('outdat/flowfield.h5', {}).get('nstep')
+          complete = (
+              rc == 0
+              and required_paths.issubset(files)
+              and current_step == 2000
+              and all_finite
+              and all_positive
+          )
+          report = {
+              'solver_return_code': rc,
+              'files': files,
+              'required_current_and_backup_files': sorted(required_paths),
+              'all_required_files_present': required_paths.issubset(files),
+              'all_floating_datasets_recursively_finite': all_finite,
+              'all_ro_p_t_positive': all_positive,
+              'current_nstep': current_step,
+              'target_nstep': 2000,
+              'complete_clean_checkpoint_gate': complete,
+              'note': 'If strict FPE aborts before a checkpoint, missing HDF5 is reported rather than inferred as a pass.',
+          }
+          Path('diagnostics/hdf5_recursive_gate.json').write_text(json.dumps(report, indent=2) + '\n')
+          print(json.dumps(report, indent=2))
+          PY_HDF5
+
+      - name: Package diagnostic evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=R26_V3_STRICT_FPE_FRESH_U100_KN005_DIAGNOSTIC
+          mkdir -p "$ROOT"
+          cp -a audits diagnostics patches "$ROOT/" || true
+          cp -a diagnostic_case/case_metadata.json "$ROOT/" || true
+          cp -a diagnostic_case/datin "$ROOT/case_input" || true
+          cp -a diagnostic_case/outdat "$ROOT/current_hdf5" || true
+          cp -a diagnostic_case/bakup "$ROOT/backup_hdf5" || true
+          cp -a astr/src/methodmoment.F90 "$ROOT/patched_methodmoment.F90" || true
+          zip -r -9 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+          test -s "${ROOT}.zip"
+
+      - name: Upload strict-FPE diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R26_V3_STRICT_FPE_FRESH_U100_KN005_DIAGNOSTIC
+          path: |
+            R26_V3_STRICT_FPE_FRESH_U100_KN005_DIAGNOSTIC.zip
+            R26_V3_STRICT_FPE_FRESH_U100_KN005_DIAGNOSTIC.zip.sha256
+          compression-level: 0
+          retention-days: 7
+
+      - name: Final diagnostic verdict
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY_VERDICT'
+          from pathlib import Path
+          import json
+
+          runtime = json.loads(Path('diagnostics/runtime_marker_gate.json').read_text())
+          hdf5 = json.loads(Path('diagnostics/hdf5_recursive_gate.json').read_text())
+          flags = json.loads(Path('diagnostics/build_flag_gate.json').read_text())
+          bulk = json.loads(Path('audits/r26_v3_term_by_term_audit.json').read_text())
+          wall = json.loads(Path('audits/wall_relaxation_restart_corner_audit.json').read_text())
+          clean = (
+              flags['strict_build_gate_passed']
+              and bulk['all_required_bulk_checks_passed']
+              and wall['audit_complete']
+              and runtime['solver_return_code'] == 0
+              and runtime['total_marker_lines'] == 0
+              and hdf5['complete_clean_checkpoint_gate']
+          )
+          verdict = {
+              'clean_strict_fpe_smoke': clean,
+              'solver_return_code': runtime['solver_return_code'],
+              'runtime_marker_lines': runtime['total_marker_lines'],
+              'first_marker': runtime['first_marker_name'],
+              'backtrace_detected': runtime['backtrace_detected'],
+              'hdf5_gate': hdf5['complete_clean_checkpoint_gate'],
+              'scientific_status': 'short stability/diagnostic smoke only; not convergence or publication-grade evidence',
+              'corner_status': 'unresolved double-owner/order-dependence risk; no convention selected',
+          }
+          Path('diagnostics/final_verdict.json').write_text(json.dumps(verdict, indent=2) + '\n')
+          print(json.dumps(verdict, indent=2))
+          if not clean:
+              raise SystemExit(1)
+          PY_VERDICT
