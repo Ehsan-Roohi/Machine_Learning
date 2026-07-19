@@ -1,0 +1,200 @@
+name: R13 nonlinear U100 Kn0.05 N32 20k diagnostic
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/run-r13-nonlinear-u100-kn005-n32-diagnostic.yml'
+      - 'diagnostics/analyze_r13_nonlinear_diagnostic.py'
+      - 'run-r13-nonlinear-diagnostic-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: r13-nonlinear-u100-kn005-n32-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  nonlinear-r13-matched-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime and analysis dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            openmpi-bin libopenmpi-dev libhdf5-openmpi-dev \
+            python3-h5py python3-numpy python3-scipy zip time
+
+      - name: Download audited PR25 nonlinear R13 solver
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          run-id: 29673135273
+          github-token: ${{ github.token }}
+          path: audited
+
+      - name: Verify exact source, strict build, and proven CFD-domain fix
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN="$PWD/audited/astr/build/bin/astr"
+          test -x "$BIN"
+          ldd "$BIN" | tee audited/diagnostic_ldd.txt
+          ! grep -Fq 'not found' audited/diagnostic_ldd.txt
+          FLAGS=audited/astr/build/src/CMakeFiles/astr.dir/flags.make
+          grep -F -- '-ffpe-trap=invalid' "$FLAGS"
+          grep -F -- '-fbacktrace' "$FLAGS"
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('audited/audits/formula_patch_report.json').read_text())
+          oracle=json.loads(Path('audited/audits/formula_oracle_report.json').read_text())
+          assert report['all_passed'] and oracle['all_passed']
+          checks=report['checks']
+          assert checks['interior_only_bare_flow_decode']
+          assert checks['moment_interior_decode_with_face_swap']
+          assert 'full nonlinear' in report['model'].lower()
+          print(json.dumps({
+              'formula_patch_all_passed': report['all_passed'],
+              'formula_oracle_all_passed': oracle['all_passed'],
+              'model': report['model'],
+              'physical_decode_fix': checks['interior_only_bare_flow_decode'],
+              'moment_decode_and_dswap_fix': checks['moment_interior_decode_with_face_swap'],
+          }, indent=2))
+          PY
+          sha256sum audited/astr/src/methodmoment.F90 audited/astr/src/mainloop.F90 \
+            | tee audited/diagnostic_source_sha256.txt
+
+      - name: Generate fresh matched U100 Kn0.05 N32 case
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cp audited/rana2013_r13/make_rana2013_case.py diagnostic_make_case.py
+          python3 - <<'PY'
+          from pathlib import Path
+          path=Path('diagnostic_make_case.py')
+          text=path.read_text()
+          if text.count('ULID=50.0') != 1:
+              raise SystemExit('expected exactly one audited ULID=50.0 assignment')
+          text=text.replace('ULID=50.0','ULID=100.0')
+          text=text.replace('exact Uwall=50 m/s','exact Uwall=100 m/s')
+          path.write_text(text)
+          PY
+          python3 diagnostic_make_case.py \
+            --template-case audited/template_case --output case \
+            --paper-kn 0.05 --grid-points 32 --maxstep 20000 \
+            --dt 2.5e-5 --checkpoint-every 1000
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          meta=json.loads(Path('case/rana2013_case_metadata.json').read_text())
+          assert meta['initial_state']=='global equilibrium at rest'
+          assert meta['moment'].lower().startswith('full nonlinear')
+          assert meta['lid_velocity_m_per_s']==100.0
+          assert meta['paper_kn']==0.05
+          assert meta['paper_mesh_N_cells_per_direction']==32
+          assert meta['dt']==2.5e-5 and meta['maxstep']==20000
+          print(json.dumps(meta,indent=2))
+          PY
+
+      - name: Run one continuous 20k solve and preserve final three checkpoints
+        id: solve
+        shell: bash
+        env:
+          GFORTRAN_ERROR_BACKTRACE: '1'
+        run: |
+          set -u
+          mkdir -p diagnostics/checkpoints
+          export WALLCLOCK_MINUTES=330
+          bash audited/rana2013_r13/run_rana2013_case.sh \
+            "$PWD/case" "$PWD/audited/astr/build/bin/astr" \
+            "$PWD/audited/rana2013_r13/rana2013_reference.json" &
+          RUNNER_PID=$!
+
+          snapshot_checkpoint() {
+            python3 - <<'PY'
+          from pathlib import Path
+          import os, shutil
+          import h5py
+          targets={18000,19000,20000}
+          out=Path('diagnostics/checkpoints')
+          for src in (Path('case/outdat/flowfield.h5'),Path('case/bakup/flowfield.h5')):
+              try:
+                  with h5py.File(src,'r') as h5:
+                      step=int(h5['nstep'][0])
+                  if step not in targets:
+                      continue
+                  dest=out/f'flowfield_{step}.h5'
+                  if dest.exists():
+                      continue
+                  tmp=out/f'.flowfield_{step}.h5.tmp'
+                  shutil.copyfile(src,tmp)
+                  with h5py.File(tmp,'r') as h5:
+                      copied=int(h5['nstep'][0])
+                      h5.visititems(lambda name,obj: None)
+                  if copied != step:
+                      tmp.unlink(missing_ok=True)
+                      continue
+                  os.replace(tmp,dest)
+                  print(f'captured exact checkpoint {step} from {src}')
+              except (OSError,KeyError,ValueError):
+                  continue
+          PY
+          }
+
+          while kill -0 "$RUNNER_PID" 2>/dev/null; do
+            snapshot_checkpoint
+            sleep 2
+          done
+          set +e
+          wait "$RUNNER_PID"
+          RUN_RC=$?
+          set -e
+          snapshot_checkpoint
+          echo "runner_return_code=$RUN_RC" | tee diagnostics/runner_status.txt
+          find diagnostics/checkpoints -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+          test "$RUN_RC" -eq 0
+          test -s diagnostics/checkpoints/flowfield_18000.h5
+          test -s diagnostics/checkpoints/flowfield_19000.h5
+          test -s diagnostics/checkpoints/flowfield_20000.h5
+
+      - name: Validate current, backup, convergence, and anti-Fourier metrics
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 diagnostics/analyze_r13_nonlinear_diagnostic.py \
+            --case case --snapshots-dir diagnostics/checkpoints \
+            --output diagnostics/final_validation.json
+
+      - name: Package diagnostic evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uxo pipefail
+          ROOT=R13_NONLINEAR_U100_KN005_N32_20K_DIAGNOSTIC
+          mkdir -p "$ROOT"
+          cp -a diagnostics "$ROOT/" || true
+          cp -a case/rana2013_case_metadata.json case/analysis case/logs "$ROOT/" || true
+          mkdir -p "$ROOT/current_hdf5" "$ROOT/backup_hdf5" "$ROOT/audits"
+          cp -a case/outdat/*.h5 "$ROOT/current_hdf5/" || true
+          cp -a case/bakup/*.h5 "$ROOT/backup_hdf5/" || true
+          cp -a audited/audits/. "$ROOT/audits/" || true
+          cp -a audited/diagnostic_ldd.txt audited/diagnostic_source_sha256.txt "$ROOT/audits/" || true
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload nonlinear R13 diagnostic artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R13_NONLINEAR_U100_KN005_N32_20K_DIAGNOSTIC
+          path: |
+            R13_NONLINEAR_U100_KN005_N32_20K_DIAGNOSTIC.zip
+            R13_NONLINEAR_U100_KN005_N32_20K_DIAGNOSTIC.zip.sha256
+          compression-level: 0
+          retention-days: 14
