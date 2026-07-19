@@ -45,6 +45,7 @@ jobs:
           rm -rf astr/build
           mkdir -p audits patches
           python3 rana2013_r13/patch_rana2013_r13.py astr --report audits/formula_patch_report.json --patch-output patches/ASTR_RANA2013_R13_EXACT.patch
+          python3 rana2013_r13/stabilize_rana2013_wall_solver.py astr --report audits/wall_iteration_report.json --patch-output patches/ASTR_RANA2013_R13_STABLE_FIXED_POINT.patch
           python3 rana2013_r13/audit_rana2013_formulas.py astr --output audits/formula_oracle_report.json
       - name: Build exact Rana R13 source
         run: |
@@ -55,7 +56,7 @@ jobs:
         shell: bash
         run: |
           set -uxo pipefail
-          python3 rana2013_r13/make_rana2013_case.py --template-case template_case --output smoke_rana --paper-kn 0.0798 --grid-points 40 --maxstep 500 --dt 1.0e-5 --checkpoint-every 250
+          python3 rana2013_r13/make_rana2013_case.py --template-case template_case --output smoke_rana --paper-kn 0.0798 --grid-points 40 --maxstep 2000 --dt 1.0e-5 --checkpoint-every 500
           set +e
           (cd smoke_rana && mpirun --oversubscribe -np 4 ../astr/build/bin/astr run datin/input.astr_r13_jfm > smoke.log 2>&1)
           RUN_RC=$?
@@ -91,7 +92,7 @@ jobs:
           else:
               with h5py.File(path,'r') as h:
                   nstep=int(h['nstep'][0])
-                  if nstep != 500: errors.append(f'nstep={nstep}, expected 500')
+                  if nstep != 2000: errors.append(f'nstep={nstep}, expected 2000')
                   for k in ['ro','p','t','u1','u2','qx','qy','sigmaxy','Rxy','Delta']:
                       if k not in h: errors.append(f'missing dataset {k}'); continue
                       a=np.asarray(h[k]);
