@@ -1,0 +1,69 @@
+name: Audit LR13 readiness (solver hard-blocked)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/audit-lr13-readiness.yml'
+      - 'audits/audit_lr13_readiness.py'
+      - 'docs/LR13_READINESS.md'
+      - 'run-lr13-readiness-audit-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: lr13-readiness-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-only-no-solver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download exact audited nonlinear R13 source from PR25
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          run-id: 29673135273
+          github-token: ${{ github.token }}
+          path: audited
+
+      - name: Audit LR13 mathematical completeness without executing solver
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 audits/audit_lr13_readiness.py \
+            --source-root audited/astr/src \
+            --output lr13_readiness_report.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('lr13_readiness_report.json').read_text())
+          assert report['audited_model']=='ASTR nonlinear R13 (not LR13)'
+          assert report['action']=='BLOCK_BEFORE_SOLVER_EXECUTION'
+          assert report['solver_execution_authorized'] is False
+          assert report['ready_for_2k_smoke'] is False
+          assert report['ready_for_20k_diagnostic'] is False
+          assert not any(report['required_gates'].values())
+          assert report['evidence']['active_unconditional_nonlinear_blocks']
+          assert report['evidence']['nonlinear_moment_advection']
+          assert report['evidence']['nonlinear_wall_products']
+          print('Verified: audit blocks both LR13 solver stages; no solver was executed.')
+          PY
+          sha256sum lr13_readiness_report.json docs/LR13_READINESS.md \
+            > lr13_readiness_evidence.sha256
+
+      - name: Upload readiness evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LR13_READINESS_AUDIT_NO_SOLVER
+          path: |
+            lr13_readiness_report.json
+            lr13_readiness_evidence.sha256
+            docs/LR13_READINESS.md
+          retention-days: 30
