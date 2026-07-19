@@ -1,0 +1,1 @@
+Run the term-by-term audited Maxwell R26 full-bulk-closure v3 from the validated 50k seed to 100k, retaining the relaxed-WBC caveat and producing checkpoint, convergence, DSMC-comparison, source, patch, and audit artifacts.
