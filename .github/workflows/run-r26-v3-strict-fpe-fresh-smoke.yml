@@ -68,10 +68,13 @@ jobs:
           patch astr/src/methodmoment.F90 < astr_r26_stage3/R26_FULL_BULK_CLOSURE_V3_portable.patch
 
           cp astr_r26_stage3/ASTR_UPDATEFVAR_ACTIVE_DIMENSION_GUARD.patch patches/
+          cp astr_r26_stage3/ASTR_UPDATEFVAR_PHYSICAL_DOMAIN_MPI_FACE_SWAP.patch patches/
+          sed -i 's/\r$//' astr/src/fludyna.F90
+          sed -i 's/\r$//' astr/src/mainloop.F90
           sha256sum astr/src/methodmoment.F90 > diagnostics/methodmoment_before_runtime_fix.sha256
           sha256sum astr/src/mainloop.F90 > diagnostics/mainloop_before_runtime_fix.sha256
-          sed -i 's/\r$//' astr/src/fludyna.F90
           patch astr/src/fludyna.F90 < astr_r26_stage3/ASTR_UPDATEFVAR_ACTIVE_DIMENSION_GUARD.patch
+          patch astr/src/mainloop.F90 < astr_r26_stage3/ASTR_UPDATEFVAR_PHYSICAL_DOMAIN_MPI_FACE_SWAP.patch
           sha256sum astr/src/methodmoment.F90 > diagnostics/methodmoment_after_runtime_fix.sha256
           sha256sum astr/src/mainloop.F90 > diagnostics/mainloop_after_runtime_fix.sha256
 
@@ -82,7 +85,10 @@ jobs:
           import re
 
           fludyna = Path('astr/src/fludyna.F90').read_text()
-          patch_text = Path('astr_r26_stage3/ASTR_UPDATEFVAR_ACTIVE_DIMENSION_GUARD.patch').read_text()
+          patch_text = '\n'.join([
+              Path('astr_r26_stage3/ASTR_UPDATEFVAR_ACTIVE_DIMENSION_GUARD.patch').read_text(),
+              Path('astr_r26_stage3/ASTR_UPDATEFVAR_PHYSICAL_DOMAIN_MPI_FACE_SWAP.patch').read_text(),
+          ])
           moment = Path('astr/src/methodmoment.F90').read_bytes()
           mainloop = Path('astr/src/mainloop.F90').read_bytes()
           fludyna_compact = re.sub(r'\s+', '', fludyna.lower())
@@ -93,35 +99,36 @@ jobs:
               'inactive_k_halos_clamped_for_ndims_lt_3': bool(re.search(r'if\s*\(\s*ndims\s*<\s*3\s*\).*?kss\s*=\s*0.*?kee\s*=\s*km', fludyna, re.S | re.I)),
               'inactive_j_halos_clamped_for_ndims_lt_2': bool(re.search(r'if\s*\(\s*ndims\s*<\s*2\s*\).*?jss\s*=\s*0.*?jee\s*=\s*jm', fludyna, re.S | re.I)),
               'bare_updatefvar_defaults_to_physical_cells': 'iss=0iee=imjss=0jee=jmkss=0kee=kmif(present(ibeg))iss=ibeg' in fludyna_compact,
-              'explicit_halo_subcycle_calls_retained': (
-                  'callupdatefvar(qsub,-hm,im+hm,-hm,jm+hm,-hm,km+hm)' in mainloop_compact
-                  and 'callupdatefvar(q,-hm,im+hm,-hm,jm+hm,-hm,km+hm)' in mainloop_compact
-              ),
+              'all_three_bare_decodes_are_explicitly_physical': mainloop_compact.count('callupdatefvar(q,0,im,0,jm,0,km)') == 5 and 'callupdatefvar(q)' not in mainloop_compact,
+              'moment_subcycle_decodes_are_physical': 'callupdatefvar(qsub,0,im,0,jm,0,km)' in mainloop_compact and '-hm,im+hm,-hm,jm+hm,-hm,km+hm' not in mainloop_compact,
+              'moment_gradients_exchange_valid_mpi_faces': mainloop_compact.count('callgradcal(timerept=ltimrpt,dswap=.true.)') == 1,
               'exact_conversion_bounds_density_finiteness_gate_present': 'ieee_is_finite(qint(iss:iee,jss:jee,kss:kee,1))' in re.sub(r'\s+', '', fludyna),
               'exact_conversion_bounds_density_positivity_gate_present': 'qint(iss:iee,jss:jee,kss:kee,1)<=0.d0' in re.sub(r'\s+', '', fludyna),
               'runtime_gate_marker_present': 'UPDATEFVAR_DENSITY_GATE' in fludyna,
               'runtime_patch_does_not_import_parallel': 'use parallel' not in patch_text.lower(),
               'methodmoment_sha256_unchanged_by_runtime_patch': moment_before == hashlib.sha256(moment).hexdigest(),
-              'mainloop_sha256_unchanged_by_runtime_patch': mainloop_before == hashlib.sha256(mainloop).hexdigest(),
+              'mainloop_sha256_changed_by_exact_domain_patch': mainloop_before != hashlib.sha256(mainloop).hexdigest(),
               'runtime_patch_does_not_name_R26wbc_or_corner_logic': (
                   'r26wbc' not in patch_text.lower()
                   and 'mom_wall_boundary' not in patch_text.lower()
                   and 'corner' not in patch_text.lower()
               ),
-              'scope': 'physical-cell defaults for bare conservative-to-primitive conversion, dimension-aware explicit bounds, and a pre-division density gate only; no R26 formula, WBC, corner convention, or mainloop call changed',
-              'reason': 'Fresh initialization does not populate default x/y or inactive-k halo q cells before the bare updatefvar call; explicit halo subcycle calls remain explicit and guarded.',
+              'scope': 'PR25-proven ASTR CFD-domain fix: physical-cell decodes plus gradcal MPI-face exchange, with dimension-aware density gate; no R26 formula, WBC, corner convention, or methodmoment change',
+              'reason': 'ASTR conservative halos are not all populated at flow-decode points; PR25 already established physical decode plus dswap face exchange as the strict-FPE-safe domain semantics.',
           }
           report['runtime_domain_fix_audit_passed'] = all(report[key] for key in [
               'inactive_k_halos_clamped_for_ndims_lt_3',
               'inactive_j_halos_clamped_for_ndims_lt_2',
               'bare_updatefvar_defaults_to_physical_cells',
-              'explicit_halo_subcycle_calls_retained',
+              'all_three_bare_decodes_are_explicitly_physical',
+              'moment_subcycle_decodes_are_physical',
+              'moment_gradients_exchange_valid_mpi_faces',
               'exact_conversion_bounds_density_finiteness_gate_present',
               'exact_conversion_bounds_density_positivity_gate_present',
               'runtime_gate_marker_present',
               'runtime_patch_does_not_import_parallel',
               'methodmoment_sha256_unchanged_by_runtime_patch',
-              'mainloop_sha256_unchanged_by_runtime_patch',
+              'mainloop_sha256_changed_by_exact_domain_patch',
               'runtime_patch_does_not_name_R26wbc_or_corner_logic',
           ])
           Path('audits/updatefvar_active_dimension_audit.json').write_text(json.dumps(report, indent=2) + '\n')
@@ -555,6 +562,7 @@ jobs:
           cp -a diagnostic_case/outdat "$ROOT/current_hdf5" || true
           cp -a diagnostic_case/bakup "$ROOT/backup_hdf5" || true
           cp -a astr/src/methodmoment.F90 "$ROOT/patched_methodmoment.F90" || true
+          cp -a astr/src/mainloop.F90 "$ROOT/patched_mainloop.F90" || true
           cp -a astr/src/fludyna.F90 "$ROOT/patched_fludyna.F90" || true
           zip -r -9 "${ROOT}.zip" "$ROOT"
           sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
