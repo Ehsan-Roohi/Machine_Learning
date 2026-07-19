@@ -1,0 +1,3 @@
+Launch the fresh nonlinear R13 U=100 m/s, Kn=0.05, N=32, dt=2.5e-5,
+continuous 20,000-step strict-FPE diagnostic. This is a stability and
+three-checkpoint convergence diagnostic only, not publication-grade evidence.
