@@ -118,11 +118,16 @@ jobs:
             patches
           compression-level: 6
           retention-days: 14
-      - name: Package audited executable and source
+      - name: Package audited executable and source with preserved layout
         run: |
-          mkdir -p ASTR_RANA2013_R13_AUDITED/smoke_validation
-          cp -a astr/src astr/build/bin/astr template_case rana2013_r13 audits patches RANA2013_R13_FORMULA_AUDIT.md ASTR_RANA2013_R13_AUDITED/
-          cp -a smoke_rana/analysis smoke_rana/smoke.log smoke_rana/smoke_status.txt smoke_rana/smoke_gate_report.json ASTR_RANA2013_R13_AUDITED/smoke_validation/
+          set -euxo pipefail
+          PKG=ASTR_RANA2013_R13_AUDITED
+          mkdir -p "$PKG/smoke_validation"
+          cp -a astr "$PKG/"
+          install -m 0755 astr/build/bin/astr "$PKG/astr/build/bin/astr"
+          cp -a template_case rana2013_r13 audits patches RANA2013_R13_FORMULA_AUDIT.md "$PKG/"
+          cp -a smoke_rana/analysis smoke_rana/smoke.log smoke_rana/smoke_status.txt smoke_rana/smoke_gate_report.json "$PKG/smoke_validation/"
+          test -x "$PKG/astr/build/bin/astr"
       - uses: actions/upload-artifact@v4
         with:
           name: ASTR_RANA2013_R13_AUDITED_SOURCE
@@ -155,7 +160,6 @@ jobs:
           EXE=$(find audited -maxdepth 4 -type f -name astr -print -quit)
           test -n "$EXE"
           chmod +x "$EXE"
-          echo "ASTR_EXE=$PWD/$EXE" | tee -a "$GITHUB_ENV"
           file "$EXE" | tee audited/executable_file.txt
           ldd "$EXE" | tee audited/executable_ldd.txt
           if grep -q 'not found' audited/executable_ldd.txt; then
@@ -176,8 +180,123 @@ jobs:
             audited/mpirun_version.txt
           retention-days: 14
 
-  paper-core:
+  paper-anchor:
     needs: matrix-runtime-preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install matrix runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran openmpi-bin libopenmpi-dev libhdf5-openmpi-dev \
+            python3-h5py python3-numpy zip time
+      - uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          path: audited
+      - name: Verify executable runtime and generate anchor case
+        run: |
+          set -euo pipefail
+          BIN="$PWD/audited/astr/build/bin/astr"
+          if [[ ! -f "$BIN" ]]; then
+            find audited -maxdepth 5 -printf '%y %p\n' | sort
+            echo '::error::Audited solver executable is missing or has the wrong artifact layout'
+            exit 2
+          fi
+          chmod 0755 "$BIN"
+          ldd "$BIN" 2>&1 | tee audited/ldd.log
+          if grep -Fq 'not found' audited/ldd.log; then
+            echo '::error::Missing solver runtime dependency'
+            exit 2
+          fi
+          test -x "$BIN"
+          python3 audited/rana2013_r13/make_rana2013_case.py \
+            --template-case audited/template_case --output case \
+            --paper-kn 0.0798 --grid-points 75 --maxstep 5000 \
+            --dt 1.0e-5 --checkpoint-every 1000
+      - name: Run Kn 0.0798 N75 anchor from equilibrium
+        id: solve
+        continue-on-error: true
+        env:
+          WALLCLOCK_MINUTES: 60
+        run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$PWD/audited/astr/build/bin/astr" "$PWD/audited/rana2013_r13/rana2013_reference.json"
+      - name: Require a finite anchor checkpoint before releasing the matrix
+        env:
+          SOLVE_OUTCOME: ${{ steps.solve.outcome }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          import h5py
+          import numpy as np
+
+          def require_all_floating_datasets_finite(h5_path):
+              if not h5_path.is_file():
+                  raise SystemExit(f'missing required HDF5 file: {h5_path}')
+              bad = []
+              with h5py.File(h5_path, 'r') as h5:
+                  def visit(name, obj):
+                      if isinstance(obj, h5py.Dataset) and obj.dtype.kind in 'fc':
+                          if not np.isfinite(np.asarray(obj[...])).all():
+                              bad.append(name)
+                  h5.visititems(visit)
+              if bad:
+                  raise SystemExit(f'non-finite floating datasets in {h5_path}: {bad}')
+
+          if os.environ.get('SOLVE_OUTCOME') != 'success':
+              raise SystemExit(f"anchor solve outcome={os.environ.get('SOLVE_OUTCOME')}")
+          status_path = Path('case/analysis/run_status.json')
+          if not status_path.is_file():
+              raise SystemExit('Kn=0.0798 N=75 is missing analysis/run_status.json')
+          status = json.loads(status_path.read_text())
+          if status.get('status') != 'completed' or int(status.get('return_code', -1)) != 0:
+              raise SystemExit(f'anchor run status is not complete: {status}')
+          if int(status.get('last_checkpoint_step') or -1) != 5000:
+              raise SystemExit(f'anchor status checkpoint is not 5000: {status}')
+          path = Path('case/outdat/flowfield.h5')
+          if not path.is_file():
+              raise SystemExit('Kn=0.0798 N=75 produced no flowfield checkpoint')
+          with h5py.File(path, 'r') as h:
+              step = int(h['nstep'][0])
+              if step != 5000:
+                  raise SystemExit(f'anchor checkpoint nstep={step}, expected 5000')
+              for key in ['ro', 'p', 't', 'u1', 'u2', 'qx', 'qy', 'sigmaxy', 'Rxy', 'Delta']:
+                  if key not in h:
+                      raise SystemExit(f'anchor checkpoint missing {key}')
+                  values = np.asarray(h[key])
+                  if not np.isfinite(values).all():
+                      raise SystemExit(f'anchor checkpoint contains non-finite {key}')
+              for key in ['ro', 'p', 't']:
+                  if np.min(np.asarray(h[key])) <= 0:
+                      raise SystemExit(f'anchor checkpoint contains non-positive {key}')
+          require_all_floating_datasets_finite(path)
+          require_all_floating_datasets_finite(Path('case/outdat/auxiliary.h5'))
+          print(f'Validated Kn=0.0798 N=75 anchor checkpoint at nstep={step}')
+          PY
+      - name: Package anchor result
+        if: always()
+        run: |
+          ROOT=RANA2013_R13_ANCHOR_KN_00798_N75_5K
+          mkdir -p "$ROOT"
+          cp -a case "$ROOT/" || true
+          cp -a audited/audits audited/patches audited/RANA2013_R13_FORMULA_AUDIT.md audited/ldd.log "$ROOT/" || true
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: RANA2013_R13_ANCHOR_KN_00798_N75_5K
+          path: |
+            RANA2013_R13_ANCHOR_KN_00798_N75_5K.zip
+            RANA2013_R13_ANCHOR_KN_00798_N75_5K.zip.sha256
+          compression-level: 0
+          retention-days: 14
+
+  paper-core:
+    needs: [audit-build-smoke, paper-anchor]
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -194,44 +313,100 @@ jobs:
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
-      - name: Install matrix runtime dependencies
+      - name: Install matrix runtime libraries
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            openmpi-bin libopenmpi-dev libhdf5-openmpi-dev \
+            gfortran openmpi-bin libopenmpi-dev libhdf5-openmpi-dev \
             python3-h5py python3-numpy zip time
       - uses: actions/download-artifact@v4
         with:
           name: ASTR_RANA2013_R13_AUDITED_SOURCE
           path: audited
-      - name: Locate executable, validate runtime, and generate exact paper case
-        shell: bash
+      - name: Verify executable runtime and generate exact paper case
         run: |
-          set -euxo pipefail
-          EXE=$(find audited -maxdepth 4 -type f -name astr -print -quit)
-          test -n "$EXE"
-          chmod +x "$EXE"
-          file "$EXE"
-          ldd "$EXE" | tee audited/executable_ldd.txt
-          if grep -q 'not found' audited/executable_ldd.txt; then
-            echo "Missing shared-library dependency in audited executable" >&2
+          set -euo pipefail
+          BIN="$PWD/audited/astr/build/bin/astr"
+          if [[ ! -f "$BIN" ]]; then
+            find audited -maxdepth 5 -printf '%y %p\n' | sort
+            echo '::error::Audited solver executable is missing or has the wrong artifact layout'
             exit 2
           fi
-          echo "ASTR_EXE=$PWD/$EXE" >> "$GITHUB_ENV"
+          chmod 0755 "$BIN"
+          ldd "$BIN" 2>&1 | tee audited/ldd.log
+          if grep -Fq 'not found' audited/ldd.log; then
+            echo '::error::Missing solver runtime dependency'
+            exit 2
+          fi
+          test -x "$BIN"
           python3 audited/rana2013_r13/make_rana2013_case.py --template-case audited/template_case --output case --paper-kn ${{ matrix.paper_kn }} --grid-points 75 --maxstep 100000 --dt 1.0e-5 --checkpoint-every 5000
       - name: Run from equilibrium and analyze
         id: solve
         continue-on-error: true
         env:
           WALLCLOCK_MINUTES: 300
-        run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$ASTR_EXE" "$PWD/audited/rana2013_r13/rana2013_reference.json"
+        run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$PWD/audited/astr/build/bin/astr" "$PWD/audited/rana2013_r13/rana2013_reference.json"
+      - name: Require a complete finite 100k core result
+        env:
+          SOLVE_OUTCOME: ${{ steps.solve.outcome }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          import h5py
+          import numpy as np
+
+          def require_all_floating_datasets_finite(h5_path):
+              if not h5_path.is_file():
+                  raise SystemExit(f'missing required HDF5 file: {h5_path}')
+              bad = []
+              with h5py.File(h5_path, 'r') as h5:
+                  def visit(name, obj):
+                      if isinstance(obj, h5py.Dataset) and obj.dtype.kind in 'fc':
+                          if not np.isfinite(np.asarray(obj[...])).all():
+                              bad.append(name)
+                  h5.visititems(visit)
+              if bad:
+                  raise SystemExit(f'non-finite floating datasets in {h5_path}: {bad}')
+
+          if os.environ.get('SOLVE_OUTCOME') != 'success':
+              raise SystemExit(f"core solve outcome={os.environ.get('SOLVE_OUTCOME')}")
+          status_path = Path('case/analysis/run_status.json')
+          if not status_path.is_file():
+              raise SystemExit('core case is missing analysis/run_status.json')
+          status = json.loads(status_path.read_text())
+          if status.get('status') != 'completed' or int(status.get('return_code', -1)) != 0:
+              raise SystemExit(f'core run status is not complete: {status}')
+          if int(status.get('last_checkpoint_step') or -1) != 100000:
+              raise SystemExit(f'core status checkpoint is not 100000: {status}')
+          path = Path('case/outdat/flowfield.h5')
+          if not path.is_file():
+              raise SystemExit('core case produced no flowfield checkpoint')
+          with h5py.File(path, 'r') as h:
+              step = int(h['nstep'][0])
+              if step != 100000:
+                  raise SystemExit(f'core checkpoint nstep={step}, expected 100000')
+              for key in ['ro', 'p', 't', 'u1', 'u2', 'qx', 'qy', 'sigmaxy', 'Rxy', 'Delta']:
+                  if key not in h:
+                      raise SystemExit(f'core checkpoint missing {key}')
+                  values = np.asarray(h[key])
+                  if not np.isfinite(values).all():
+                      raise SystemExit(f'core checkpoint contains non-finite {key}')
+              for key in ['ro', 'p', 't']:
+                  if np.min(np.asarray(h[key])) <= 0:
+                      raise SystemExit(f'core checkpoint contains non-positive {key}')
+          require_all_floating_datasets_finite(path)
+          require_all_floating_datasets_finite(Path('case/outdat/auxiliary.h5'))
+          print('Validated complete finite core result at nstep=100000')
+          PY
       - name: Package restartable result
         if: always()
         run: |
           ROOT=RANA2013_R13_CORE_KN_${{ matrix.tag }}_N75
           mkdir -p "$ROOT"
-          cp -a case "$ROOT/"
-          cp -a audited/audits audited/patches audited/RANA2013_R13_FORMULA_AUDIT.md "$ROOT/"
+          cp -a case "$ROOT/" || true
+          cp -a audited/audits audited/patches audited/RANA2013_R13_FORMULA_AUDIT.md audited/ldd.log "$ROOT/" || true
           zip -r -6 "${ROOT}.zip" "$ROOT"
           sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
       - uses: actions/upload-artifact@v4
@@ -245,7 +420,7 @@ jobs:
           retention-days: 14
 
   paper-grid-study:
-    needs: matrix-runtime-preflight
+    needs: [audit-build-smoke, paper-anchor]
     strategy:
       fail-fast: false
       max-parallel: 6
@@ -256,44 +431,101 @@ jobs:
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
-      - name: Install matrix runtime dependencies
+      - name: Install matrix runtime libraries
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            openmpi-bin libopenmpi-dev libhdf5-openmpi-dev \
+            gfortran openmpi-bin libopenmpi-dev libhdf5-openmpi-dev \
             python3-h5py python3-numpy zip time
       - uses: actions/download-artifact@v4
         with:
           name: ASTR_RANA2013_R13_AUDITED_SOURCE
           path: audited
-      - name: Locate executable, validate runtime, and generate exact mesh-study case
-        shell: bash
+      - name: Verify executable runtime and generate exact mesh-study case
         run: |
-          set -euxo pipefail
-          EXE=$(find audited -maxdepth 4 -type f -name astr -print -quit)
-          test -n "$EXE"
-          chmod +x "$EXE"
-          file "$EXE"
-          ldd "$EXE" | tee audited/executable_ldd.txt
-          if grep -q 'not found' audited/executable_ldd.txt; then
-            echo "Missing shared-library dependency in audited executable" >&2
+          set -euo pipefail
+          BIN="$PWD/audited/astr/build/bin/astr"
+          if [[ ! -f "$BIN" ]]; then
+            find audited -maxdepth 5 -printf '%y %p\n' | sort
+            echo '::error::Audited solver executable is missing or has the wrong artifact layout'
             exit 2
           fi
-          echo "ASTR_EXE=$PWD/$EXE" >> "$GITHUB_ENV"
+          chmod 0755 "$BIN"
+          ldd "$BIN" 2>&1 | tee audited/ldd.log
+          if grep -Fq 'not found' audited/ldd.log; then
+            echo '::error::Missing solver runtime dependency'
+            exit 2
+          fi
+          test -x "$BIN"
           python3 audited/rana2013_r13/make_rana2013_case.py --template-case audited/template_case --output case --paper-kn ${{ matrix.paper_kn }} --grid-points ${{ matrix.grid_points }} --maxstep 100000 --dt 1.0e-5 --checkpoint-every 5000
       - name: Run mesh case and retain last checkpoint
+        id: solve
         continue-on-error: true
         env:
           WALLCLOCK_MINUTES: 300
-        run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$ASTR_EXE" "$PWD/audited/rana2013_r13/rana2013_reference.json"
+        run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$PWD/audited/astr/build/bin/astr" "$PWD/audited/rana2013_r13/rana2013_reference.json"
+      - name: Require a complete finite 100k grid result
+        env:
+          SOLVE_OUTCOME: ${{ steps.solve.outcome }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          import h5py
+          import numpy as np
+
+          def require_all_floating_datasets_finite(h5_path):
+              if not h5_path.is_file():
+                  raise SystemExit(f'missing required HDF5 file: {h5_path}')
+              bad = []
+              with h5py.File(h5_path, 'r') as h5:
+                  def visit(name, obj):
+                      if isinstance(obj, h5py.Dataset) and obj.dtype.kind in 'fc':
+                          if not np.isfinite(np.asarray(obj[...])).all():
+                              bad.append(name)
+                  h5.visititems(visit)
+              if bad:
+                  raise SystemExit(f'non-finite floating datasets in {h5_path}: {bad}')
+
+          if os.environ.get('SOLVE_OUTCOME') != 'success':
+              raise SystemExit(f"grid solve outcome={os.environ.get('SOLVE_OUTCOME')}")
+          status_path = Path('case/analysis/run_status.json')
+          if not status_path.is_file():
+              raise SystemExit('grid case is missing analysis/run_status.json')
+          status = json.loads(status_path.read_text())
+          if status.get('status') != 'completed' or int(status.get('return_code', -1)) != 0:
+              raise SystemExit(f'grid run status is not complete: {status}')
+          if int(status.get('last_checkpoint_step') or -1) != 100000:
+              raise SystemExit(f'grid status checkpoint is not 100000: {status}')
+          path = Path('case/outdat/flowfield.h5')
+          if not path.is_file():
+              raise SystemExit('grid case produced no flowfield checkpoint')
+          with h5py.File(path, 'r') as h:
+              step = int(h['nstep'][0])
+              if step != 100000:
+                  raise SystemExit(f'grid checkpoint nstep={step}, expected 100000')
+              for key in ['ro', 'p', 't', 'u1', 'u2', 'qx', 'qy', 'sigmaxy', 'Rxy', 'Delta']:
+                  if key not in h:
+                      raise SystemExit(f'grid checkpoint missing {key}')
+                  values = np.asarray(h[key])
+                  if not np.isfinite(values).all():
+                      raise SystemExit(f'grid checkpoint contains non-finite {key}')
+              for key in ['ro', 'p', 't']:
+                  if np.min(np.asarray(h[key])) <= 0:
+                      raise SystemExit(f'grid checkpoint contains non-positive {key}')
+          require_all_floating_datasets_finite(path)
+          require_all_floating_datasets_finite(Path('case/outdat/auxiliary.h5'))
+          print('Validated complete finite grid result at nstep=100000')
+          PY
       - name: Package grid result
         if: always()
         run: |
           KTAG=$(echo '${{ matrix.paper_kn }}' | tr -d '.')
           ROOT=RANA2013_R13_GRID_KN_${KTAG}_N${{ matrix.grid_points }}
           mkdir -p "$ROOT"
-          cp -a case "$ROOT/"
-          cp -a audited/audits audited/patches audited/RANA2013_R13_FORMULA_AUDIT.md "$ROOT/"
+          cp -a case "$ROOT/" || true
+          cp -a audited/audits audited/patches audited/RANA2013_R13_FORMULA_AUDIT.md audited/ldd.log "$ROOT/" || true
           zip -r -4 "${ROOT}.zip" "$ROOT"
           sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
       - uses: actions/upload-artifact@v4
