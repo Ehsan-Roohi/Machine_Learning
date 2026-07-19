@@ -215,7 +215,7 @@ jobs:
           python3 audited/rana2013_r13/make_rana2013_case.py \
             --template-case audited/template_case --output case \
             --paper-kn 0.0798 --grid-points 75 --maxstep 5000 \
-            --dt 1.0e-5 --checkpoint-every 1000
+            --dt 1.0e-5 --checkpoint-every 100
       - name: Run Kn 0.0798 N75 anchor from equilibrium
         id: solve
         continue-on-error: true
