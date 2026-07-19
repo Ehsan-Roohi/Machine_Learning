@@ -21,7 +21,9 @@ def tensor_fields(h):
     R[...,0,2]=R[...,2,0]=arr(h,'Rxz'); R[...,1,1]=arr(h,'Ryy')
     R[...,1,2]=R[...,2,1]=arr(h,'Ryz'); R[...,2,2]=-R[...,0,0]-R[...,1,1]
     M=np.zeros(s.shape[:-2]+(3,3,3))
-    vals={(0,0,0):arr(h,'mxxx'),(0,0,1):arr(h,'mxxy'),(0,0,2):arr(h,'mxxz'),(0,1,1):arr(h,'mxyy'),(1,1,1):arr(h,'myyy'),(1,1,2):arr(h,'myyz'),(0,1,2):arr(h,'mxyz')}
+    vals={(0,0,0):arr(h,'mxxx'),(0,0,1):arr(h,'mxxy'),(0,0,2):arr(h,'mxxz'),
+          (0,1,1):arr(h,'mxyy'),(1,1,1):arr(h,'myyy'),(1,1,2):arr(h,'myyz'),
+          (0,1,2):arr(h,'mxyz')}
     import itertools
     for inds,v in vals.items():
         for p in set(itertools.permutations(inds)): M[...,p[0],p[1],p[2]]=v
@@ -53,7 +55,10 @@ def wall_residuals(h,const2):
     q=np.stack([arr(h,'qx'),arr(h,'qy'),arr(h,'qz')],axis=-1)
     vel=np.stack([arr(h,'u1'),arr(h,'u2'),arr(h,'u3')],axis=-1)
     theta=arr(h,'t')/const2; p=arr(h,'p'); D=arr(h,'Delta')
-    walls=[('left',(slice(1,-1),0),np.array([1.,0.,0.]),np.array([0.,1.,0.]),np.zeros(3)),('right',(slice(1,-1),-1),np.array([-1.,0.,0.]),np.array([0.,1.,0.]),np.zeros(3)),('bottom',(0,slice(1,-1)),np.array([0.,1.,0.]),np.array([1.,0.,0.]),np.zeros(3)),('top',(-1,slice(1,-1)),np.array([0.,-1.,0.]),np.array([1.,0.,0.]),np.array([1.,0.,0.]))]
+    walls=[('left',(slice(1,-1),0),np.array([1.,0.,0.]),np.array([0.,1.,0.]),np.zeros(3)),
+           ('right',(slice(1,-1),-1),np.array([-1.,0.,0.]),np.array([0.,1.,0.]),np.zeros(3)),
+           ('bottom',(0,slice(1,-1)),np.array([0.,1.,0.]),np.array([1.,0.,0.]),np.zeros(3)),
+           ('top',(-1,slice(1,-1)),np.array([0.,-1.,0.]),np.array([1.,0.,0.]),np.array([1.,0.,0.]))]
     out={}
     for name,sl,n,t,vw in walls:
         ss=S[sl]; rr=R[sl]; mm=M[sl]; qq=q[sl]; vv=vel[sl]
@@ -62,7 +67,13 @@ def wall_residuals(h,const2):
         P=pp+0.5*stt-de/(120*th)-Rtt/(28*th)
         V=np.einsum('...i,i->...',vv-vw,t); vn=np.einsum('...i,i->...',vv-vw,n)
         T=th-1.0/const2; C=np.sqrt(2.0/(np.pi*th))
-        terms={'7a_vn':np.abs(vn)/(np.abs(np.einsum('...i,i->...',vv,t))+1e-30),'7b_sigma_tn':relative_residual(stn,-C*(P*V+qt/5+mtnn/2)),'7c_qn':relative_residual(qn,-C*(2*P*T-0.5*P*V*V+0.5*th*snn+de/15+5*Rnn/28)),'7d_Rtn':relative_residual(Rtn,C*(6*P*T*V+P*th*V-P*V**3-11*th*qt/5-th*mtnn/2)),'7e_mnnn':relative_residual(mnnn,C*(2*P*T/5-3*P*V*V/5-7*th*snn/5+de/75-Rnn/14)),'7f_mttn':relative_residual(mttn,-C*(P*T/5-4*P*V*V/5+Rtt/14+th*stt-th*snn/5+de/150))}
+        terms={
+          '7a_vn':np.abs(vn)/(np.abs(np.einsum('...i,i->...',vv,t))+1e-30),
+          '7b_sigma_tn':relative_residual(stn,-C*(P*V+qt/5+mtnn/2)),
+          '7c_qn':relative_residual(qn,-C*(2*P*T-0.5*P*V*V+0.5*th*snn+de/15+5*Rnn/28)),
+          '7d_Rtn':relative_residual(Rtn,C*(6*P*T*V+P*th*V-P*V**3-11*th*qt/5-th*mtnn/2)),
+          '7e_mnnn':relative_residual(mnnn,C*(2*P*T/5-3*P*V*V/5-7*th*snn/5+de/75-Rnn/14)),
+          '7f_mttn':relative_residual(mttn,-C*(P*T/5-4*P*V*V/5+Rtt/14+th*stt-th*snn/5+de/150))}
         out[name]={k:{'max':float(np.nanmax(v)),'mean':float(np.nanmean(v))} for k,v in terms.items()}
         out[name]['P_min']=float(np.nanmin(P))
     return out
@@ -84,13 +95,13 @@ def main():
     f=a.case/'outdat/flowfield.h5'; prev=a.case/'bakup/flowfield.h5'
     with h5py.File(f,'r') as h, h5py.File(a.case/'datin/grid.h5','r') as g:
         fields={k:arr(h,k) for k in ['ro','p','t','u1','u2','qx','qy','sigmaxy','Delta']}
-        for k,xv in fields.items():
-            if not np.isfinite(xv).all(): raise FloatingPointError(k)
+        for k,x in fields.items():
+            if not np.isfinite(x).all(): raise FloatingPointError(k)
         if np.min(fields['ro'])<=0 or np.min(fields['p'])<=0 or np.min(fields['t'])<=0: raise FloatingPointError('non-positive thermodynamic field')
         x=np.asarray(g['x'])[0,0,:]; y=np.asarray(g['y'])[0,:,0]
         const2=GAMMA*meta['Mach']**2
-        signed_D=float(np.trapezoid(const2*fields['sigmaxy'][-1,:],x)); Dabs=abs(signed_D)
-        ix=int(np.argmin(abs(x-0.5))); G=float(np.trapezoid(np.abs(fields['u1'][:,ix]),y))
+        signed_D=float(np.trapz(const2*fields['sigmaxy'][-1,:],x)); Dabs=abs(signed_D)
+        ix=int(np.argmin(abs(x-0.5))); G=float(np.trapz(np.abs(fields['u1'][:,ix]),y))
         wall=wall_residuals(h,const2)
         nstep=int(h['nstep'][0]); time=float(h['time'][0])
         iy=int(np.argmin(abs(y-0.5)))
