@@ -1,0 +1,1 @@
+Continue validated nonlinear R13 from 20k through explicit 40k, 60k, 80k and 100k milestones with checkpoint health, convergence and anti-Fourier diagnostics.
