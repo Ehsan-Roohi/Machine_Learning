@@ -43,6 +43,8 @@ jobs:
         run: |
           set -euxo pipefail
           BIN="$PWD/audited/astr/build/bin/astr"
+          test -f "$BIN"
+          chmod 0755 "$BIN"
           test -x "$BIN"
           ldd "$BIN" | tee audited/diagnostic_ldd.txt
           ! grep -Fq 'not found' audited/diagnostic_ldd.txt
