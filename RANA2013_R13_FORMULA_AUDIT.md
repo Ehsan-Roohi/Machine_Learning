@@ -26,13 +26,13 @@ The previous Gu/ASTR wall rearrangement is replaced on the dedicated 2D Rana bra
 
 `P = p + sigma_tt/2 - Delta/(120 theta) - R_tt/(28 theta)`.
 
-All six conditions are implemented algebraically with full accommodation `chi=1`. The solver alternates the two exact maps used by ASTR's split boundary update: Eqs. (7a–c) set normal velocity, tangential slip and temperature jump; Eqs. (7b–f) set stress and heat-flux boundary values. No uncheckpointed wall-memory arrays are used, so restart changes cannot alter the fixed point.
+All six conditions are implemented algebraically with full accommodation `chi=1`. The solver uses a damped, checkpoint-invariant fixed-point iteration of the two exact maps used by ASTR's split boundary update: Eqs. (7a–c) set normal velocity, tangential slip and temperature jump; Eqs. (7b–f) set stress and heat-flux boundary values. The damping changes only the nonlinear iteration path, not the Eq. (7) fixed point. No uncheckpointed wall-memory arrays are used, so restart changes cannot alter the fixed point.
 
 ## Paper conditions reproduced
 
 - square cavity, homogeneous `z` direction;
 - `T0 = 273 K` on all walls;
-- constant top-lid speed `50 m/s` from the first iteration;
+- top-lid final speed `50 m/s`, reached through a 1000-iteration numerical homotopy; the final boundary condition is exactly the paper value;
 - full Maxwell accommodation `chi=1`;
 - paper Knudsen definition `Kn = mu/(rho sqrt(theta) L)`;
 - principal/profile and table values: `0.010, 0.071, 0.0798, 0.141, 0.354, 0.3989, 0.707`;
@@ -45,6 +45,6 @@ The workflow exports centerline profiles, Eq. (30) metrics `D` and `G`, paper er
 1. patch count and coefficient audit;
 2. randomized tensor and wall-equation oracle;
 3. full Fortran build;
-4. fresh 40×40 smoke run from equilibrium;
-5. positive/finite thermodynamic fields;
+4. fresh 40×40 smoke run from equilibrium, through the complete lid homotopy and at the final paper speed;
+5. positive/finite thermodynamic fields and positive effective wall pressure;
 6. matrix benchmark runs with labeled partial artifacts if the GitHub runner wall-time limit is reached.
