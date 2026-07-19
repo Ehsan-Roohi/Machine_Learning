@@ -36,6 +36,11 @@ esac
 if grep -q 'COMPUTATION CRASHED' "$CASE/logs/astr.log" "$CASE/logs/astr_time.log" 2>/dev/null; then
   STATUS=crashed
 fi
+if grep -Eq 'IEEE_INVALID_FLAG|SIGFPE|Floating-point exception' \
+    "$CASE/logs/astr.log" "$CASE/logs/astr_time.log" 2>/dev/null; then
+  STATUS=floating_point_invalid
+  if [[ "$RC" -eq 0 ]]; then RC=6; fi
+fi
 
 STEP=-1
 SIM_TIME=0.0
