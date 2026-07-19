@@ -67,6 +67,60 @@ jobs:
           cp astr_r26_stage3/R26_FULL_BULK_CLOSURE_V3_portable.patch patches/
           patch astr/src/methodmoment.F90 < astr_r26_stage3/R26_FULL_BULK_CLOSURE_V3_portable.patch
 
+          cp astr_r26_stage3/ASTR_UPDATEFVAR_ACTIVE_DIMENSION_GUARD.patch patches/
+          sha256sum astr/src/methodmoment.F90 > diagnostics/methodmoment_before_runtime_fix.sha256
+          sha256sum astr/src/mainloop.F90 > diagnostics/mainloop_before_runtime_fix.sha256
+          sed -i 's/\r$//' astr/src/fludyna.F90
+          patch astr/src/fludyna.F90 < astr_r26_stage3/ASTR_UPDATEFVAR_ACTIVE_DIMENSION_GUARD.patch
+          sha256sum astr/src/methodmoment.F90 > diagnostics/methodmoment_after_runtime_fix.sha256
+          sha256sum astr/src/mainloop.F90 > diagnostics/mainloop_after_runtime_fix.sha256
+
+          python3 - <<'PY_DOMAIN'
+          from pathlib import Path
+          import hashlib
+          import json
+          import re
+
+          fludyna = Path('astr/src/fludyna.F90').read_text()
+          patch_text = Path('astr_r26_stage3/ASTR_UPDATEFVAR_ACTIVE_DIMENSION_GUARD.patch').read_text()
+          moment = Path('astr/src/methodmoment.F90').read_bytes()
+          mainloop = Path('astr/src/mainloop.F90').read_bytes()
+          moment_before = Path('diagnostics/methodmoment_before_runtime_fix.sha256').read_text().split()[0]
+          mainloop_before = Path('diagnostics/mainloop_before_runtime_fix.sha256').read_text().split()[0]
+          report = {
+              'inactive_k_halos_clamped_for_ndims_lt_3': bool(re.search(r'if\s*\(\s*ndims\s*<\s*3\s*\).*?kss\s*=\s*0.*?kee\s*=\s*km', fludyna, re.S | re.I)),
+              'inactive_j_halos_clamped_for_ndims_lt_2': bool(re.search(r'if\s*\(\s*ndims\s*<\s*2\s*\).*?jss\s*=\s*0.*?jee\s*=\s*jm', fludyna, re.S | re.I)),
+              'active_dimension_x_y_halo_semantics_retained': 'iss=-hm' in fludyna and 'iee=im+hm' in fludyna and 'jss=-hm' in fludyna and 'jee=jm+hm' in fludyna,
+              'exact_conversion_bounds_density_finiteness_gate_present': 'ieee_is_finite(qint(iss:iee,jss:jee,kss:kee,1))' in re.sub(r'\s+', '', fludyna),
+              'exact_conversion_bounds_density_positivity_gate_present': 'qint(iss:iee,jss:jee,kss:kee,1)<=0.d0' in re.sub(r'\s+', '', fludyna),
+              'runtime_gate_marker_present': 'UPDATEFVAR_DENSITY_GATE' in fludyna,
+              'methodmoment_sha256_unchanged_by_runtime_patch': moment_before == hashlib.sha256(moment).hexdigest(),
+              'mainloop_sha256_unchanged_by_runtime_patch': mainloop_before == hashlib.sha256(mainloop).hexdigest(),
+              'runtime_patch_does_not_name_R26wbc_or_corner_logic': (
+                  'r26wbc' not in patch_text.lower()
+                  and 'mom_wall_boundary' not in patch_text.lower()
+                  and 'corner' not in patch_text.lower()
+              ),
+              'scope': 'dimension-aware conservative-to-primitive conversion bounds and pre-division density gate only; no R26 formula, WBC, corner convention, or mainloop call semantics changed',
+              'reason': 'For the 2-D case km=0, inactive k-halo q planes are not populated; the pre-fix full-halo array division trapped at fludyna.F90:514 on all ranks.',
+          }
+          report['runtime_domain_fix_audit_passed'] = all(report[key] for key in [
+              'inactive_k_halos_clamped_for_ndims_lt_3',
+              'inactive_j_halos_clamped_for_ndims_lt_2',
+              'active_dimension_x_y_halo_semantics_retained',
+              'exact_conversion_bounds_density_finiteness_gate_present',
+              'exact_conversion_bounds_density_positivity_gate_present',
+              'runtime_gate_marker_present',
+              'methodmoment_sha256_unchanged_by_runtime_patch',
+              'mainloop_sha256_unchanged_by_runtime_patch',
+              'runtime_patch_does_not_name_R26wbc_or_corner_logic',
+          ])
+          Path('audits/updatefvar_active_dimension_audit.json').write_text(json.dumps(report, indent=2) + '\n')
+          print(json.dumps(report, indent=2))
+          if not report['runtime_domain_fix_audit_passed']:
+              raise SystemExit(5)
+          PY_DOMAIN
+
           python3 - <<'PY_AUDIT'
           from pathlib import Path
           import itertools
@@ -352,6 +406,7 @@ jobs:
               'SIGFPE': re.compile(r'SIGFPE', re.I),
               'floating_point_exception': re.compile(r'Floating-point exception', re.I),
               'rana_pressure_failure': re.compile(r'RANA_P_FAILURE', re.I),
+              'updatefvar_density_gate': re.compile(r'UPDATEFVAR_DENSITY_GATE', re.I),
               'computation_crashed': re.compile(r'COMPUTATION CRASHED', re.I),
               'nan_token': re.compile(r'(?<![A-Za-z])NaN(?![A-Za-z])', re.I),
               'inf_token': re.compile(r'(?<![A-Za-z])[-+]?Inf(?:inity)?(?![A-Za-z])', re.I),
@@ -491,6 +546,7 @@ jobs:
           cp -a diagnostic_case/outdat "$ROOT/current_hdf5" || true
           cp -a diagnostic_case/bakup "$ROOT/backup_hdf5" || true
           cp -a astr/src/methodmoment.F90 "$ROOT/patched_methodmoment.F90" || true
+          cp -a astr/src/fludyna.F90 "$ROOT/patched_fludyna.F90" || true
           zip -r -9 "${ROOT}.zip" "$ROOT"
           sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
           test -s "${ROOT}.zip"
