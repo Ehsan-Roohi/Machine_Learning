@@ -1,0 +1,144 @@
+name: Continue R26 v3 from clean 11k to 20k diagnostic
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/run-r26-v3-resume-11k-to-20k.yml'
+      - 'run-r26-v3-resume-11k-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  resume-11k-to-20k:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran cmake make openmpi-bin libopenmpi-dev libhdf5-openmpi-dev unzip zip python3-h5py python3-numpy python3-scipy
+      - name: Download pristine source
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: source_artifact
+      - name: Download clean partial R26-v3 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: R26_V3_STRICT_FPE_FRESH_U100_KN005_N32_20K_DIAGNOSTIC
+          run-id: 29689454883
+          github-token: ${{ github.token }}
+          path: seed_artifact
+      - name: Reconstruct exact patched source and 11k restart
+        run: |
+          set -euxo pipefail
+          INNER=$(find source_artifact -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          mkdir restored seed
+          unzip -q "$INNER" -d restored
+          INNER_SEED=$(find seed_artifact -name 'R26_V3_STRICT_FPE_FRESH_U100_KN005_N32_20K_DIAGNOSTIC.zip' -print -quit)
+          unzip -q "$INNER_SEED" -d seed
+          ROOT=$(find seed -type d -name 'R26_V3_STRICT_FPE_FRESH_U100_KN005_N32_20K_DIAGNOSTIC' -print -quit)
+          cp -a restored/astr ./astr
+          cp "$ROOT/patched_methodmoment.F90" astr/src/methodmoment.F90
+          cp "$ROOT/patched_mainloop.F90" astr/src/mainloop.F90
+          cp "$ROOT/patched_fludyna.F90" astr/src/fludyna.F90
+          rm -rf astr/build
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build --verbose -j 2
+          test -x astr/build/bin/astr
+          mkdir -p case/datin case/outdat case/bakup diagnostics/checkpoints
+          cp -a "$ROOT/case_input/." case/datin/
+          cp -a "$ROOT/current_hdf5/." case/outdat/
+          cp -a "$ROOT/backup_hdf5/." case/bakup/
+          python3 - <<'PY'
+          from pathlib import Path
+          import h5py,numpy as np,re
+          p=Path('case/outdat/flowfield.h5')
+          with h5py.File(p,'r') as h:
+            assert int(np.asarray(h['nstep']).reshape(-1)[0])==11000
+            for k in ['ro','p','t']:
+              a=np.asarray(h[k]); assert np.isfinite(a).all() and a.min()>0
+          inp=next(Path('case/datin').glob('input.astr*'))
+          lines=inp.read_text().splitlines()
+          for i,line in enumerate(lines):
+            if line.strip().startswith('# lrestar'):
+              lines[i+1]='t'
+          inp.write_text('\n'.join(lines)+'\n')
+          c=Path('case/datin/controller')
+          lines=c.read_text().splitlines()
+          for i,line in enumerate(lines):
+            if line.strip().startswith('# maxstep,feqchkpt'):
+              lines[i+1]=f'{20000:9d}, {1000:7d}, {1000:7d},     500,     100,   100'
+          c.write_text('\n'.join(lines)+'\n')
+          PY
+      - name: Run 11k to 20k and watch checkpoints
+        id: solve
+        continue-on-error: true
+        env:
+          GFORTRAN_ERROR_BACKTRACE: '1'
+        run: |
+          set -uo pipefail
+          cat > diagnostics/watch.py <<'PY'
+          from pathlib import Path
+          import h5py,numpy as np,time,shutil,os
+          while not Path('diagnostics/stop').exists():
+            for p in [Path('case/outdat/flowfield.h5'),Path('case/bakup/flowfield.h5')]:
+              try:
+                with h5py.File(p,'r') as h: s=int(np.asarray(h['nstep']).reshape(-1)[0])
+                if s>=12000 and s%1000==0:
+                  q=Path(f'diagnostics/checkpoints/step_{s:06d}.h5')
+                  if not q.exists(): shutil.copy2(p,q)
+              except Exception: pass
+            time.sleep(2)
+          PY
+          python3 diagnostics/watch.py & W=$!
+          INPUT=$(basename "$(find case/datin -name 'input.astr*' -print -quit)")
+          set +e
+          (cd case && timeout --preserve-status 330m mpirun --oversubscribe -np 4 ../astr/build/bin/astr run "datin/$INPUT" > ../diagnostics/runtime.log 2>&1)
+          RC=$?
+          set -e
+          echo $RC > diagnostics/runtime_rc.txt
+          touch diagnostics/stop; wait $W || true
+      - name: Validate diagnostic endpoint
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re,h5py,numpy as np
+          rc=int(Path('diagnostics/runtime_rc.txt').read_text())
+          log=Path('diagnostics/runtime.log').read_text(errors='replace')
+          markers={x:len(re.findall(x,log,re.I)) for x in ['SIGFPE','IEEE_INVALID_FLAG','COMPUTATION CRASHED','NaN','Infinity']}
+          p=Path('case/outdat/flowfield.h5'); actual=0; finite=False; positive=False
+          if p.exists():
+            with h5py.File(p,'r') as h:
+              actual=int(np.asarray(h['nstep']).reshape(-1)[0])
+              finite=True
+              def visit(n,o):
+                global finite
+                if isinstance(o,h5py.Dataset) and o.dtype.kind in 'fc' and not np.isfinite(o[...]).all(): finite=False
+              h.visititems(visit)
+              positive=all(float(np.min(h[k][...]))>0 for k in ['ro','p','t'])
+          v={'source_checkpoint':11000,'target':20000,'actual':actual,'solver_return_code':rc,'markers':markers,'finite':finite,'positive':positive,'completed':actual==20000 and rc==0 and finite and positive and all(x==0 for x in markers.values()),'scientific_status':'diagnostic restart only: legacy R26 wall-memory arrays were not serialized and reset at 11k'}
+          Path('diagnostics/final_verdict.json').write_text(json.dumps(v,indent=2)+'\n'); print(json.dumps(v,indent=2))
+          PY
+      - name: Package evidence
+        if: always()
+        run: |
+          ROOT=R26_V3_RESTART_11K_TO_20K_DIAGNOSTIC
+          mkdir -p "$ROOT"
+          cp -a diagnostics case/outdat case/bakup "$ROOT/" || true
+          cp -a astr/src/methodmoment.F90 astr/src/mainloop.F90 astr/src/fludyna.F90 "$ROOT/" || true
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: R26_V3_RESTART_11K_TO_20K_DIAGNOSTIC
+          path: R26_V3_RESTART_11K_TO_20K_DIAGNOSTIC.zip
+          retention-days: 14
+          compression-level: 0
