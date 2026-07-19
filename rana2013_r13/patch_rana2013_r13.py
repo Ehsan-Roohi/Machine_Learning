@@ -214,7 +214,8 @@ def main():
     ap.add_argument('--patch-output',type=Path,required=True)
     a=ap.parse_args()
     mm=a.astr/'src/methodmoment.F90'; bc=a.astr/'src/bc.F90'
-    mm0=mm.read_text(); bc0=bc.read_text()
+    cmake=a.astr/'src/CMakeLists.txt'
+    mm0=mm.read_text(); bc0=bc.read_text(); cmake0=cmake.read_text()
     text=replace_sub(mm0,'mijkcal',MIJK)
     text=replace_sub(text,'rijcal',RIJ)
     text=replace_sub(text,'deltacal',DELTA)
@@ -229,11 +230,22 @@ def main():
     bc1,n3=re.subn(r'uwall\s*=\s*dble\(nstep\)\*deltat(?:\*10\.0d0)?\s*\n\s*if \(uwall > 1\.0d0\) uwall = 1\.0d0',
                    'uwall = min(1.0d0,dble(nstep)/1000.0d0)',bc0)
     if n2<1 or n3<1: raise RuntimeError(f'Lid-homotopy patches missing: method={n2}, bc={n3}')
-    mm.write_text(text); bc.write_text(bc1)
+    cmake_anchor='target_link_libraries(astr)\n'
+    fpe_trap=('if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")\n'
+              '  target_compile_options(astr PRIVATE -ffpe-trap=invalid -fbacktrace)\n'
+              'endif()\n')
+    if cmake0.count(cmake_anchor)!=1:
+        raise RuntimeError('Expected one ASTR target_link_libraries anchor')
+    if '-ffpe-trap=invalid' in cmake0:
+        raise RuntimeError('Unexpected pre-existing GNU invalid trap')
+    cmake1=cmake0.replace(cmake_anchor,fpe_trap+'\n'+cmake_anchor,1)
+    mm.write_text(text); bc.write_text(bc1); cmake.write_text(cmake1)
     patch=''.join(difflib.unified_diff(mm0.splitlines(True),text.splitlines(True),
         fromfile='astr/src/methodmoment.F90.upstream',tofile='astr/src/methodmoment.F90.rana2013'))
     patch+=''.join(difflib.unified_diff(bc0.splitlines(True),bc1.splitlines(True),
         fromfile='astr/src/bc.F90.upstream',tofile='astr/src/bc.F90.rana2013'))
+    patch+=''.join(difflib.unified_diff(cmake0.splitlines(True),cmake1.splitlines(True),
+        fromfile='astr/src/CMakeLists.txt.upstream',tofile='astr/src/CMakeLists.txt.rana2013'))
     a.patch_output.parent.mkdir(parents=True,exist_ok=True); a.patch_output.write_text(patch)
     checks={
       'eq13_m_qsigma_4_over_3':'4.0d0/(3.0d0*pv)' in text,
@@ -259,6 +271,7 @@ def main():
       'primary_wall_relaxation':text.count('bc_relax_primary=0.05d0')==2,
       'moment_wall_cadence_normalized':'bc_relax_moment=1.0d0-(1.0d0-bc_relax_primary)**(subdeltat/deltat)' in text,
       'checkpoint_invariant_wall_solver':'checkpoint-invariant fixed-point iteration' in text,
+      'gnu_invalid_trap_target':cmake1.count('target_compile_options(astr PRIVATE -ffpe-trap=invalid -fbacktrace)')==1,
     }
     report={'reference':'Rana, Torrilhon & Struchtrup, JCP 236 (2013), Eqs. (3),(4),(7),(13)',
             'model':'full nonlinear transformed Maxwell R13 Eq. (13), cadence-normalized checkpoint-invariant fixed-point iteration of exact Eq. (7)',
