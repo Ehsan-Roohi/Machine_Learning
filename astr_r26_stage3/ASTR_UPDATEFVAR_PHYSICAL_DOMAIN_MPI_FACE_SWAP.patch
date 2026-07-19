@@ -1,0 +1,56 @@
+--- mainloop.F90.orig
++++ mainloop.F90
+@@ -112,12 +112,12 @@
+             ! interpolate q in time
+             qsub=interlinear(time,time+deltat,q00,q,subtime)
+             !
+-            ! update flow variables, including halos
+-            call updatefvar(qsub,-hm,im+hm,-hm,jm+hm,-hm,km+hm)
++            ! Decode physical cells; gradcal exchanges valid MPI faces.
++            call updatefvar(qsub,0,im,0,jm,0,km)
+             !
+             call miucomp()
+             !
+-            call gradcal(timerept=ltimrpt)
++            call gradcal(timerept=ltimrpt,dswap=.true.)
+             !
+             call rk3mom(timestep=subdeltat)
+             !
+@@ -130,8 +130,8 @@
+           !
+           call qmomswap()
+           !
+-          ! retore flow variables from q
+-          call updatefvar(q,-hm,im+hm,-hm,jm+hm,-hm,km+hm)
++          ! Restore physical cells; the next RK stage rebuilds halos.
++          call updatefvar(q,0,im,0,jm,0,km)
+           !
+         endif
+         !
+@@ -435,7 +435,7 @@
+       !
+       time_beg_2=ptime()
+       !
+-      call updatefvar(q)
++      call updatefvar(q,0,im,0,jm,0,km)
+       !
+       ctime(15)=ctime(15)+ptime()-time_beg_2
+       !
+@@ -660,7 +660,7 @@
+       !
+       call spongefilter
+       !
+-      call updatefvar(q)
++      call updatefvar(q,0,im,0,jm,0,km)
+       !
+       ! call crashcheck
+       if(lcracon) call crashfix
+@@ -1007,7 +1007,7 @@
+         stop ' !! error 2 of datpnt @ databakup'
+       endif
+       !
+-      call updatefvar(q)
++      call updatefvar(q,0,im,0,jm,0,km)
+       !
+     else
+       stop ' !! mode error @ databakup'
