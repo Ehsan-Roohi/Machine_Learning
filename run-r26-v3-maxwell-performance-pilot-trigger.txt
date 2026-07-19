@@ -1,0 +1,1 @@
+Trigger fresh R26-v3 Maxwell transport pilots with 1, 2 and 4 MPI ranks.
