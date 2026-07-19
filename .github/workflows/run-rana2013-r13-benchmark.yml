@@ -54,26 +54,75 @@ jobs:
       - name: Fresh equilibrium smoke gate
         shell: bash
         run: |
-          set -euxo pipefail
+          set -uxo pipefail
           python3 rana2013_r13/make_rana2013_case.py --template-case template_case --output smoke_rana --paper-kn 0.0798 --grid-points 40 --maxstep 500 --dt 1.0e-5 --checkpoint-every 250
+          set +e
           (cd smoke_rana && mpirun --oversubscribe -np 4 ../astr/build/bin/astr run datin/input.astr_r13_jfm > smoke.log 2>&1)
-          ! grep -q 'COMPUTATION CRASHED' smoke_rana/smoke.log
-          python3 rana2013_r13/analyze_rana2013_case.py smoke_rana --reference rana2013_r13/rana2013_reference.json --output-dir smoke_rana/analysis
-          python3 - <<'PY'
-          import h5py,numpy as np,json
-          with h5py.File('smoke_rana/outdat/flowfield.h5','r') as h:
-              assert int(h['nstep'][0])==500
-              for k in ['ro','p','t','u1','u2','qx','qy','sigmaxy','Rxy','Delta']:
-                  a=np.asarray(h[k]); assert np.isfinite(a).all(),k
-              for k in ['ro','p','t']: assert np.min(h[k][...])>0,k
-          d=json.load(open('smoke_rana/analysis/rana2013_summary.json'))
-          assert min(x['P_min'] for x in d['wall_equation_relative_residuals'].values())>0
+          RUN_RC=$?
+          set -e
+          printf 'run_return_code=%s\n' "$RUN_RC" | tee smoke_rana/smoke_status.txt
+          echo '===== smoke.log tail ====='
+          tail -n 160 smoke_rana/smoke.log || true
+          echo '===== produced files ====='
+          find smoke_rana -maxdepth 3 -type f -printf '%p %s bytes\n' | sort || true
+          if [[ -s smoke_rana/outdat/flowfield.h5 ]]; then
+            set +e
+            python3 rana2013_r13/analyze_rana2013_case.py smoke_rana --reference rana2013_r13/rana2013_reference.json --output-dir smoke_rana/analysis 2>&1 | tee smoke_rana/analyze.log
+            ANALYZE_RC=${PIPESTATUS[0]}
+            set -e
+          else
+            ANALYZE_RC=20
+            echo 'flowfield.h5 was not produced' | tee smoke_rana/analyze.log
+          fi
+          printf 'analyze_return_code=%s\n' "$ANALYZE_RC" | tee -a smoke_rana/smoke_status.txt
+          python3 - "$RUN_RC" "$ANALYZE_RC" <<'PY'
+          import json,sys
+          from pathlib import Path
+          import h5py,numpy as np
+          run_rc,analyze_rc=map(int,sys.argv[1:])
+          errors=[]
+          log=Path('smoke_rana/smoke.log').read_text(errors='replace') if Path('smoke_rana/smoke.log').exists() else ''
+          if run_rc != 0: errors.append(f'mpirun return code {run_rc}')
+          if 'COMPUTATION CRASHED' in log: errors.append('ASTR reported COMPUTATION CRASHED')
+          if analyze_rc != 0: errors.append(f'analyzer return code {analyze_rc}')
+          path=Path('smoke_rana/outdat/flowfield.h5')
+          if not path.exists():
+              errors.append('missing flowfield.h5')
+          else:
+              with h5py.File(path,'r') as h:
+                  nstep=int(h['nstep'][0])
+                  if nstep != 500: errors.append(f'nstep={nstep}, expected 500')
+                  for k in ['ro','p','t','u1','u2','qx','qy','sigmaxy','Rxy','Delta']:
+                      if k not in h: errors.append(f'missing dataset {k}'); continue
+                      a=np.asarray(h[k]);
+                      if not np.isfinite(a).all(): errors.append(f'non-finite {k}')
+                  for k in ['ro','p','t']:
+                      if k in h and np.min(h[k][...]) <= 0: errors.append(f'non-positive {k}')
+          summary=Path('smoke_rana/analysis/rana2013_summary.json')
+          if summary.exists():
+              d=json.loads(summary.read_text())
+              pmin=min(x['P_min'] for x in d['wall_equation_relative_residuals'].values())
+              if pmin <= 0: errors.append(f'non-positive effective wall P: {pmin}')
+          Path('smoke_rana/smoke_gate_report.json').write_text(json.dumps({'passed':not errors,'errors':errors},indent=2))
+          print(json.dumps({'passed':not errors,'errors':errors},indent=2))
+          if errors: raise SystemExit(2)
           PY
+      - name: Upload smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RANA2013_R13_SMOKE_DIAGNOSTICS
+          path: |
+            smoke_rana
+            audits
+            patches
+          compression-level: 6
+          retention-days: 14
       - name: Package audited executable and source
         run: |
           mkdir -p ASTR_RANA2013_R13_AUDITED
           cp -a astr/src astr/build/bin/astr template_case rana2013_r13 audits patches RANA2013_R13_FORMULA_AUDIT.md ASTR_RANA2013_R13_AUDITED/
-          cp -a smoke_rana/analysis smoke_rana/smoke.log ASTR_RANA2013_R13_AUDITED/smoke_validation
+          cp -a smoke_rana/analysis smoke_rana/smoke.log smoke_rana/smoke_status.txt smoke_rana/smoke_gate_report.json ASTR_RANA2013_R13_AUDITED/smoke_validation
       - uses: actions/upload-artifact@v4
         with:
           name: ASTR_RANA2013_R13_AUDITED_SOURCE
