@@ -1,0 +1,232 @@
+name: Stabilized Maxwell R13 and Rana representative pilots
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'run-r13-rana-stabilization-pilot-trigger.txt'
+      - 'diagnostics/patch_r13_rana_stabilization.py'
+      - '.github/workflows/run-r13-rana-stabilization-pilot.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: r13-rana-stabilization-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pilot:
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - {tag: 'u100_kn005_n32', kind: 'u100', paper_kn: '0.05', grid: 32, maxstep: 50000, checkpoint: 1000}
+          - {tag: 'paper_kn0010_n75', kind: 'paper', paper_kn: '0.010', grid: 75, maxstep: 30000, checkpoint: 1000}
+          - {tag: 'paper_kn00798_n75', kind: 'paper', paper_kn: '0.0798', grid: 75, maxstep: 30000, checkpoint: 1000}
+          - {tag: 'paper_kn0354_n75', kind: 'paper', paper_kn: '0.354', grid: 75, maxstep: 20000, checkpoint: 1000}
+          - {tag: 'paper_kn0707_n75', kind: 'paper', paper_kn: '0.707', grid: 75, maxstep: 20000, checkpoint: 1000}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler MPI HDF5 and analysis libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran cmake make openmpi-bin libopenmpi-dev libhdf5-openmpi-dev \
+            python3-h5py python3-numpy python3-pandas unzip zip time
+
+      - name: Download audited paper-exact R13 source
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          run-id: 29673135273
+          github-token: ${{ github.token }}
+          path: audited
+
+      - name: Apply stabilization patch and rebuild strict target
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p diagnostics patches
+          python3 diagnostics/patch_r13_rana_stabilization.py audited/astr \
+            --report diagnostics/r13_rana_stabilization_patch_report.json
+          rm -rf audited/astr/build-pilot
+          cmake -S audited/astr -B audited/astr/build-pilot \
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build audited/astr/build-pilot --verbose -j 2 \
+            2>&1 | tee diagnostics/build.log
+          BIN="$PWD/audited/astr/build-pilot/bin/astr"
+          test -x "$BIN"
+          FLAGS=audited/astr/build-pilot/src/CMakeFiles/astr.dir/flags.make
+          grep -F -- '-ffpe-trap=invalid' "$FLAGS"
+          grep -F -- '-fbacktrace' "$FLAGS"
+          ldd "$BIN" | tee diagnostics/ldd.txt
+          ! grep -Fq 'not found' diagnostics/ldd.txt
+          sha256sum audited/astr/src/fludyna.F90 audited/astr/src/methodmoment.F90 \
+            audited/astr/src/bc.F90 | tee diagnostics/patched_source_sha256.txt
+
+      - name: Generate fresh representative case
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cp audited/rana2013_r13/make_rana2013_case.py make_case.py
+          if [[ '${{ matrix.kind }}' == 'u100' ]]; then
+            python3 - <<'PY'
+          from pathlib import Path
+          path=Path('make_case.py')
+          text=path.read_text()
+          if text.count('ULID=50.0') != 1:
+              raise SystemExit('unexpected ULID assignment count')
+          path.write_text(text.replace('ULID=50.0','ULID=100.0'))
+          PY
+          fi
+          python3 make_case.py \
+            --template-case audited/template_case --output case \
+            --paper-kn '${{ matrix.paper_kn }}' \
+            --grid-points ${{ matrix.grid }} \
+            --maxstep ${{ matrix.maxstep }} \
+            --dt 1.0e-5 --checkpoint-every ${{ matrix.checkpoint }}
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          meta=json.loads(Path('case/rana2013_case_metadata.json').read_text())
+          assert meta['initial_state']=='global equilibrium at rest'
+          assert meta['maxstep']==${{ matrix.maxstep }}
+          assert meta['paper_mesh_N_cells_per_direction']==${{ matrix.grid }}
+          Path('diagnostics/case_metadata_copy.json').write_text(json.dumps(meta,indent=2)+'\n')
+          print(json.dumps(meta,indent=2))
+          PY
+
+      - name: Run fresh stabilized pilot
+        id: solve
+        continue-on-error: true
+        env:
+          WALLCLOCK_MINUTES: 320
+          GFORTRAN_ERROR_BACKTRACE: '1'
+        run: |
+          set -o pipefail
+          bash audited/rana2013_r13/run_rana2013_case.sh \
+            "$PWD/case" "$PWD/audited/astr/build-pilot/bin/astr" \
+            "$PWD/audited/rana2013_r13/rana2013_reference.json"
+
+      - name: Build machine-readable pilot verdict
+        if: always()
+        env:
+          SOLVE_OUTCOME: ${{ steps.solve.outcome }}
+        shell: bash
+        run: |
+          set -uxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re
+          import h5py,numpy as np
+
+          target=${{ matrix.maxstep }}
+          status_path=Path('case/analysis/run_status.json')
+          status=json.loads(status_path.read_text()) if status_path.exists() else {}
+          log='\n'.join(
+              p.read_text(errors='replace') for p in [
+                  Path('case/logs/astr.log'),Path('case/logs/astr_time.log')
+              ] if p.exists()
+          )
+          markers={name:len(re.findall(pattern,log,re.I)) for name,pattern in {
+              'RANA_P_FAILURE':r'RANA_P_FAILURE',
+              'MAXWELL_VISCOSITY_T_FAILURE':r'MAXWELL_VISCOSITY_T_FAILURE',
+              'SIGFPE':r'SIGFPE',
+              'IEEE_INVALID_FLAG':r'IEEE_INVALID_FLAG',
+              'NaN':r'(?<![A-Za-z])NaN(?![A-Za-z])',
+              'Inf':r'(?<![A-Za-z])[-+]?Inf(?:inity)?(?![A-Za-z])',
+          }.items()}
+          h5_errors=[]
+          actual=None; physical_time=None; ranges={}
+          path=Path('case/outdat/flowfield.h5')
+          if path.exists():
+              try:
+                  with h5py.File(path,'r') as h:
+                      actual=int(np.asarray(h['nstep']).reshape(-1)[0])
+                      physical_time=float(np.asarray(h['time']).reshape(-1)[0])
+                      def visit(name,obj):
+                          if isinstance(obj,h5py.Dataset) and obj.dtype.kind in 'fc':
+                              if not np.isfinite(np.asarray(obj[...])).all():
+                                  h5_errors.append(f'non-finite:{name}')
+                      h.visititems(visit)
+                      for key in ('ro','p','t'):
+                          values=np.asarray(h[key],float)
+                          ranges[key]={'min':float(values.min()),'max':float(values.max())}
+                          if values.min() <= 0:
+                              h5_errors.append(f'non-positive:{key}')
+              except Exception as exc:
+                  h5_errors.append(repr(exc))
+          else:
+              h5_errors.append('missing current flowfield')
+          reached = actual == target
+          clean = reached and not h5_errors and sum(markers.values()) == 0 and status.get('return_code') == 0
+          report={
+              'tag':'${{ matrix.tag }}',
+              'kind':'${{ matrix.kind }}',
+              'paper_kn':'${{ matrix.paper_kn }}',
+              'grid':${{ matrix.grid }},
+              'target_step':target,
+              'actual_step':actual,
+              'physical_time':physical_time,
+              'solve_step_outcome':__import__('os').environ.get('SOLVE_OUTCOME'),
+              'run_status':status,
+              'runtime_markers':markers,
+              'hdf5_errors':h5_errors,
+              'positive_field_ranges':ranges,
+              'clean_representative_pilot':clean,
+              'scientific_status':(
+                  'stability pilot only; equations retain Rana bulk and smooth-face fixed points, '
+                  'but ASTR explicit pseudo-time is not the paper QMR steady solver'
+              ),
+          }
+          Path('diagnostics/pilot_verdict.json').write_text(json.dumps(report,indent=2)+'\n')
+          print(json.dumps(report,indent=2))
+          PY
+
+      - name: Package pilot evidence
+        if: always()
+        shell: bash
+        run: |
+          set -uxo pipefail
+          ROOT=R13_RANA_STABILIZATION_${{ matrix.tag }}
+          mkdir -p "$ROOT"
+          cp -a diagnostics "$ROOT/" || true
+          cp -a case/analysis case/logs case/rana2013_case_metadata.json "$ROOT/" || true
+          mkdir -p "$ROOT/current" "$ROOT/backup" "$ROOT/input" "$ROOT/source"
+          cp -a case/outdat/*.h5 "$ROOT/current/" || true
+          cp -a case/bakup/*.h5 "$ROOT/backup/" || true
+          cp -a case/datin/. "$ROOT/input/" || true
+          cp -a audited/astr/src/fludyna.F90 audited/astr/src/methodmoment.F90 \
+            audited/astr/src/bc.F90 "$ROOT/source/" || true
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload representative pilot artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R13_RANA_STABILIZATION_${{ matrix.tag }}
+          path: |
+            R13_RANA_STABILIZATION_${{ matrix.tag }}.zip
+            R13_RANA_STABILIZATION_${{ matrix.tag }}.zip.sha256
+          compression-level: 0
+          retention-days: 14
+
+      - name: Require clean representative pilot
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('diagnostics/pilot_verdict.json').read_text())
+          if not report['clean_representative_pilot']:
+              raise SystemExit(json.dumps(report,indent=2))
+          print('clean representative pilot passed')
+          PY
