@@ -85,12 +85,18 @@ jobs:
           patch_text = Path('astr_r26_stage3/ASTR_UPDATEFVAR_ACTIVE_DIMENSION_GUARD.patch').read_text()
           moment = Path('astr/src/methodmoment.F90').read_bytes()
           mainloop = Path('astr/src/mainloop.F90').read_bytes()
+          fludyna_compact = re.sub(r'\s+', '', fludyna.lower())
+          mainloop_compact = re.sub(r'\s+', '', mainloop.decode(errors='replace').lower())
           moment_before = Path('diagnostics/methodmoment_before_runtime_fix.sha256').read_text().split()[0]
           mainloop_before = Path('diagnostics/mainloop_before_runtime_fix.sha256').read_text().split()[0]
           report = {
               'inactive_k_halos_clamped_for_ndims_lt_3': bool(re.search(r'if\s*\(\s*ndims\s*<\s*3\s*\).*?kss\s*=\s*0.*?kee\s*=\s*km', fludyna, re.S | re.I)),
               'inactive_j_halos_clamped_for_ndims_lt_2': bool(re.search(r'if\s*\(\s*ndims\s*<\s*2\s*\).*?jss\s*=\s*0.*?jee\s*=\s*jm', fludyna, re.S | re.I)),
-              'active_dimension_x_y_halo_semantics_retained': 'iss=-hm' in fludyna and 'iee=im+hm' in fludyna and 'jss=-hm' in fludyna and 'jee=jm+hm' in fludyna,
+              'bare_updatefvar_defaults_to_physical_cells': 'iss=0iee=imjss=0jee=jmkss=0kee=kmif(present(ibeg))iss=ibeg' in fludyna_compact,
+              'explicit_halo_subcycle_calls_retained': (
+                  'callupdatefvar(qsub,-hm,im+hm,-hm,jm+hm,-hm,km+hm)' in mainloop_compact
+                  and 'callupdatefvar(q,-hm,im+hm,-hm,jm+hm,-hm,km+hm)' in mainloop_compact
+              ),
               'exact_conversion_bounds_density_finiteness_gate_present': 'ieee_is_finite(qint(iss:iee,jss:jee,kss:kee,1))' in re.sub(r'\s+', '', fludyna),
               'exact_conversion_bounds_density_positivity_gate_present': 'qint(iss:iee,jss:jee,kss:kee,1)<=0.d0' in re.sub(r'\s+', '', fludyna),
               'runtime_gate_marker_present': 'UPDATEFVAR_DENSITY_GATE' in fludyna,
@@ -102,13 +108,14 @@ jobs:
                   and 'mom_wall_boundary' not in patch_text.lower()
                   and 'corner' not in patch_text.lower()
               ),
-              'scope': 'dimension-aware conservative-to-primitive conversion bounds and pre-division density gate only; no R26 formula, WBC, corner convention, or mainloop call semantics changed',
-              'reason': 'For the 2-D case km=0, inactive k-halo q planes are not populated; the pre-fix full-halo array division trapped at fludyna.F90:514 on all ranks.',
+              'scope': 'physical-cell defaults for bare conservative-to-primitive conversion, dimension-aware explicit bounds, and a pre-division density gate only; no R26 formula, WBC, corner convention, or mainloop call changed',
+              'reason': 'Fresh initialization does not populate default x/y or inactive-k halo q cells before the bare updatefvar call; explicit halo subcycle calls remain explicit and guarded.',
           }
           report['runtime_domain_fix_audit_passed'] = all(report[key] for key in [
               'inactive_k_halos_clamped_for_ndims_lt_3',
               'inactive_j_halos_clamped_for_ndims_lt_2',
-              'active_dimension_x_y_halo_semantics_retained',
+              'bare_updatefvar_defaults_to_physical_cells',
+              'explicit_halo_subcycle_calls_retained',
               'exact_conversion_bounds_density_finiteness_gate_present',
               'exact_conversion_bounds_density_positivity_gate_present',
               'runtime_gate_marker_present',

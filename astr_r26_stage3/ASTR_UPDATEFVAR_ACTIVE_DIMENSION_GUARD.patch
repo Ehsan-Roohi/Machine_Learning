@@ -10,6 +10,25 @@
      !
      ! arguments
      real(8),intent(inout) :: qint(-hm:im+hm,-hm:jm+hm,-hm:km+hm,1:numq)
+@@ -202,12 +203,12 @@
+     integer :: iss,iee,jss,jee,kss,kee
+     !
+-    iss=-hm
+-    iee=im+hm
+-    jss=-hm
+-    jee=jm+hm
+-    kss=-hm
+-    kee=km+hm
++    iss=0
++    iee=im
++    jss=0
++    jee=jm
++    kss=0
++    kee=km
+     if(present(ibeg)) iss=ibeg
+     if(present(iend)) iee=iend
+     if(present(jbeg)) jss=jbeg
+     if(present(jend)) jee=jend
 @@ -214,6 +215,30 @@
      if(present(kbeg)) kss=kbeg
      if(present(kend)) kee=kend
