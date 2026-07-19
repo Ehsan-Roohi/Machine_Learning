@@ -48,7 +48,9 @@ jobs:
           python3 rana2013_r13/audit_rana2013_formulas.py astr --output audits/formula_oracle_report.json
       - name: Build exact Rana R13 source
         run: |
-          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_Fortran_FLAGS_RELEASE="-O3 -g -ffpe-trap=invalid -fbacktrace" \
+            -DBUILD_TESTING=OFF
           cmake --build astr/build -j 2
           test -x astr/build/bin/astr
       - name: Fresh equilibrium smoke gate
@@ -84,6 +86,8 @@ jobs:
           log=Path('smoke_rana/smoke.log').read_text(errors='replace') if Path('smoke_rana/smoke.log').exists() else ''
           if run_rc != 0: errors.append(f'mpirun return code {run_rc}')
           if 'COMPUTATION CRASHED' in log: errors.append('ASTR reported COMPUTATION CRASHED')
+          if any(x in log for x in ['IEEE_INVALID_FLAG','SIGFPE','Floating-point exception']):
+              errors.append('ASTR raised an invalid floating-point exception')
           if analyze_rc != 0: errors.append(f'analyzer return code {analyze_rc}')
           path=Path('smoke_rana/outdat/flowfield.h5')
           if not path.exists():
@@ -221,6 +225,7 @@ jobs:
         continue-on-error: true
         env:
           WALLCLOCK_MINUTES: 60
+          GFORTRAN_ERROR_BACKTRACE: '1'
         run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$PWD/audited/astr/build/bin/astr" "$PWD/audited/rana2013_r13/rana2013_reference.json"
       - name: Require a finite 5k cadence diagnostic checkpoint
         env:
