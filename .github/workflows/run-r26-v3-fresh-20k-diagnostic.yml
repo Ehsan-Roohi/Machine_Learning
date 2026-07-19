@@ -1,4 +1,4 @@
-name: R26 v3 strict-FPE fresh-equilibrium continuous 20k diagnostic
+name: R26 v3 strict-FPE fresh-equilibrium continuous 20k O3 diagnostic
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ concurrency:
 jobs:
   strict-fpe-fresh-20k:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 360
 
     steps:
       - uses: actions/checkout@v4
@@ -323,7 +323,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DBUILD_TESTING=OFF \
             '-DCMAKE_Fortran_FLAGS=-ffpe-trap=invalid -fbacktrace -fno-omit-frame-pointer' \
-            '-DCMAKE_Fortran_FLAGS_RELWITHDEBINFO=-O2 -g -ffpe-trap=invalid -fbacktrace -fno-omit-frame-pointer' \
+            '-DCMAKE_Fortran_FLAGS_RELWITHDEBINFO=-O3 -march=native -g -ffpe-trap=invalid -fbacktrace -fno-omit-frame-pointer' \
             2>&1 | tee diagnostics/cmake_configure.log
           cmake --build astr/build --verbose -j 2 2>&1 | tee diagnostics/build.log
           test -x astr/build/bin/astr
@@ -383,6 +383,8 @@ jobs:
               'computed_knudsen': metadata['computed_knudsen'],
               'dt': metadata['dt'],
               'checkpoint_every': 1000,
+              'mpi_ranks': 4,
+              'optimization': '-O3 -march=native (strict invalid-FPE and backtrace retained)',
           }, indent=2) + '\n')
           PY_CASE
 
@@ -458,7 +460,7 @@ jobs:
           set +e
           (
             cd diagnostic_case
-            timeout --preserve-status 210m mpirun --oversubscribe -np 4 \
+            timeout --preserve-status 345m mpirun --oversubscribe -np 4 \
               ../astr/build/bin/astr run "datin/$INPUT" \
               > ../diagnostics/runtime.log 2>&1
           )
@@ -846,7 +848,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          ROOT=R26_V3_STRICT_FPE_FRESH_U100_KN005_N32_20K_DIAGNOSTIC
+          ROOT=R26_V3_STRICT_FPE_FRESH_U100_KN005_N32_20K_O3_RETRY
           mkdir -p "$ROOT"
           cp -a audits diagnostics patches "$ROOT/" || true
           cp -a diagnostic_case/case_metadata.json "$ROOT/" || true
@@ -864,10 +866,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: R26_V3_STRICT_FPE_FRESH_U100_KN005_N32_20K_DIAGNOSTIC
+          name: R26_V3_STRICT_FPE_FRESH_U100_KN005_N32_20K_O3_RETRY
           path: |
-            R26_V3_STRICT_FPE_FRESH_U100_KN005_N32_20K_DIAGNOSTIC.zip
-            R26_V3_STRICT_FPE_FRESH_U100_KN005_N32_20K_DIAGNOSTIC.zip.sha256
+            R26_V3_STRICT_FPE_FRESH_U100_KN005_N32_20K_O3_RETRY.zip
+            R26_V3_STRICT_FPE_FRESH_U100_KN005_N32_20K_O3_RETRY.zip.sha256
           compression-level: 0
           retention-days: 7
 
@@ -903,6 +905,8 @@ jobs:
               'backtrace_detected': runtime['backtrace_detected'],
               'hdf5_gate': hdf5['complete_clean_checkpoint_gate'],
               'checkpoint_steps': convergence['checkpoint_steps'],
+              'mpi_ranks': 4,
+              'optimization': '-O3 -march=native',
               'final_four_anti_fourier_metrics': convergence['records'][-1]['metrics'] if convergence['records'] else None,
               'steady_convergence_criterion_passed': convergence['steady_convergence_criterion_passed'],
               'scientific_status': 'continuous transient/diagnostic only because relaxed WBC, non-serialized wall memory, and double-owner corners remain; not publication-grade evidence',
