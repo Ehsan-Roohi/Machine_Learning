@@ -29,15 +29,22 @@ jobs:
           run-id: 29624062741
           github-token: ${{ github.token }}
           path: source_artifact
-      - name: Download validated R26-v3 20k seed
+      - name: Download original R26-v3 diagnostic provenance
         uses: actions/download-artifact@v4
         with:
           name: R26_V3_STRICT_FPE_FRESH_U100_KN005_N32_20K_DIAGNOSTIC
           run-id: 29689454883
           github-token: ${{ github.token }}
-          path: seed_artifact
+          path: base_seed_artifact
+      - name: Download validated R26-v3 20k endpoint
+        uses: actions/download-artifact@v4
+        with:
+          name: R26_V3_RESTART_11K_TO_20K_DIAGNOSTIC
+          run-id: 29707336380
+          github-token: ${{ github.token }}
+          path: endpoint_artifact
       - name: Prepare exact continuation state
-        run: python3 diagnostics/prepare_r26_continuation.py --source-artifact source_artifact --seed-artifact seed_artifact --output state
+        run: python3 diagnostics/prepare_r26_continuation.py --source-artifact source_artifact --base-artifact base_seed_artifact --endpoint-artifact endpoint_artifact --output state
       - name: Continue to 40k
         run: bash diagnostics/run_r26_segment.sh state 40000
       - name: Upload 40k state
