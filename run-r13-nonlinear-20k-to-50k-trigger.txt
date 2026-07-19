@@ -1,0 +1,3 @@
+Continue the verified exact nonlinear-R13 20k checkpoint to 50k/pseudo-time 0.5
+without changing the equations, wall map, grid, Knudsen number, or timestep.
+This remains a matched-time stability/convergence diagnostic, not a publication release.
