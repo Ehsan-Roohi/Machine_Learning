@@ -100,7 +100,10 @@ jobs:
           assert meta['lid_velocity_m_per_s']==100.0
           assert meta['paper_kn']==0.05
           assert meta['paper_mesh_N_cells_per_direction']==32
-          assert meta['dt']==2.5e-5 and meta['maxstep']==20000
+          assert meta['dt_requested_upper_bound']==2.5e-5
+          assert meta['dt_grid_kn_cap']==1.0e-5
+          assert meta['dt']==min(meta['dt_requested_upper_bound'],meta['dt_grid_kn_cap'])
+          assert meta['maxstep']==20000
           print(json.dumps(meta,indent=2))
           PY
 
