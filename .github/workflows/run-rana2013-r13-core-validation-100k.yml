@@ -1,0 +1,222 @@
+name: Rana 2013 R13 core validation to 100k
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/run-rana2013-r13-core-validation-100k.yml'
+      - 'run-rana2013-r13-core-validation-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: rana2013-r13-core-validation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  paper-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - {paper_kn: '0.010', tag: '0010'}
+          - {paper_kn: '0.071', tag: '0071'}
+          - {paper_kn: '0.0798', tag: '00798'}
+          - {paper_kn: '0.141', tag: '0141'}
+          - {paper_kn: '0.354', tag: '0354'}
+          - {paper_kn: '0.3989', tag: '03989'}
+          - {paper_kn: '0.707', tag: '0707'}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime and analysis libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran openmpi-bin libopenmpi-dev libhdf5-openmpi-dev \
+            python3-h5py python3-numpy python3-pandas zip time
+
+      - name: Download audited paper-exact R13 solver
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          run-id: 29673135273
+          github-token: ${{ github.token }}
+          path: audited
+
+      - name: Verify solver, formulas, and generate paper case
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BIN="$PWD/audited/astr/build/bin/astr"
+          test -f "$BIN"
+          chmod 0755 "$BIN"
+          ldd "$BIN" | tee audited/core_${{ matrix.tag }}_ldd.log
+          ! grep -Fq 'not found' audited/core_${{ matrix.tag }}_ldd.log
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          patch=json.loads(Path('audited/audits/formula_patch_report.json').read_text())
+          oracle=json.loads(Path('audited/audits/formula_oracle_report.json').read_text())
+          assert patch['all_passed'] is True
+          assert oracle['all_passed'] is True
+          print(json.dumps({'patch':patch['all_passed'],'oracle':oracle['all_passed'],'model':patch['model']},indent=2))
+          PY
+          python3 audited/rana2013_r13/make_rana2013_case.py \
+            --template-case audited/template_case \
+            --output case \
+            --paper-kn ${{ matrix.paper_kn }} \
+            --grid-points 75 \
+            --maxstep 100000 \
+            --dt 1.0e-5 \
+            --checkpoint-every 5000
+
+      - name: Run paper case from equilibrium
+        id: solve
+        continue-on-error: true
+        shell: bash
+        env:
+          WALLCLOCK_MINUTES: 315
+          GFORTRAN_ERROR_BACKTRACE: '1'
+        run: |
+          bash audited/rana2013_r13/run_rana2013_case.sh \
+            "$PWD/case" \
+            "$PWD/audited/astr/build/bin/astr" \
+            "$PWD/audited/rana2013_r13/rana2013_reference.json"
+
+      - name: Build validation verdict
+        if: always()
+        shell: bash
+        env:
+          SOLVE_OUTCOME: ${{ steps.solve.outcome }}
+          PAPER_KN: ${{ matrix.paper_kn }}
+        run: |
+          set -uxo pipefail
+          if [[ -s case/outdat/flowfield.h5 ]]; then
+            python3 audited/rana2013_r13/analyze_rana2013_case.py \
+              case \
+              --reference audited/rana2013_r13/rana2013_reference.json \
+              --output-dir case/analysis || true
+          fi
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          import h5py, numpy as np
+
+          kn=os.environ['PAPER_KN']
+          errors=[]
+          actual_step=None
+          physical_time=None
+          clean=False
+          h5path=Path('case/outdat/flowfield.h5')
+          if not h5path.is_file():
+              errors.append('missing flowfield.h5')
+          else:
+              try:
+                  with h5py.File(h5path,'r') as h:
+                      actual_step=int(np.asarray(h['nstep'][...]).reshape(-1)[0])
+                      physical_time=float(np.asarray(h['time'][...]).reshape(-1)[0]) if 'time' in h else None
+                      bad=[]
+                      def visit(name,obj):
+                          if isinstance(obj,h5py.Dataset) and obj.dtype.kind in 'fc':
+                              if not np.isfinite(np.asarray(obj[...])).all(): bad.append(name)
+                      h.visititems(visit)
+                      if bad: errors.append('non-finite datasets: '+','.join(bad))
+                      for key in ['ro','p','t']:
+                          if key not in h: errors.append('missing '+key)
+                          elif float(np.min(np.asarray(h[key][...]))) <= 0: errors.append('non-positive '+key)
+              except Exception as exc:
+                  errors.append('HDF5 inspection: '+repr(exc))
+
+          status={}
+          p=Path('case/analysis/run_status.json')
+          if p.is_file():
+              status=json.loads(p.read_text())
+          else:
+              errors.append('missing run_status.json')
+
+          summary={}
+          sp=Path('case/analysis/rana2013_summary.json')
+          if sp.is_file(): summary=json.loads(sp.read_text())
+          else: errors.append('missing rana2013_summary.json')
+
+          D=None; G=None; comparison=None
+          if summary:
+              metrics=summary.get('metrics',{})
+              D=metrics.get('D_abs')
+              G=metrics.get('G')
+              comparison=summary.get('paper_comparison')
+
+          clean=(
+              os.environ.get('SOLVE_OUTCOME') == 'success'
+              and actual_step == 100000
+              and status.get('status') == 'completed'
+              and int(status.get('return_code',-1)) == 0
+              and not errors
+          )
+          verdict={
+              'paper_kn':kn,
+              'target_step':100000,
+              'actual_step':actual_step,
+              'physical_time':physical_time,
+              'solver_step_outcome':os.environ.get('SOLVE_OUTCOME'),
+              'clean_complete_100k':clean,
+              'D_abs':D,
+              'G':G,
+              'paper_comparison':comparison,
+              'errors':errors,
+              'scientific_status':(
+                  'complete core validation candidate; convergence and wall/corner residuals still require inspection'
+                  if clean else
+                  'partial or failed diagnostic; not a validation result'
+              ),
+          }
+          Path('case/analysis').mkdir(parents=True,exist_ok=True)
+          Path('case/analysis/core_validation_verdict.json').write_text(json.dumps(verdict,indent=2,allow_nan=False)+'\n')
+          print(json.dumps(verdict,indent=2))
+          PY
+
+      - name: Package core result
+        if: always()
+        shell: bash
+        run: |
+          set -uxo pipefail
+          ROOT=RANA2013_R13_CORE_KN_${{ matrix.tag }}_N75_100K
+          mkdir -p "$ROOT"
+          cp -a case "$ROOT/" || true
+          mkdir -p "$ROOT/audits"
+          cp -a audited/audits/. "$ROOT/audits/" || true
+          cp -a audited/patches audited/RANA2013_R13_FORMULA_AUDIT.md audited/core_${{ matrix.tag }}_ldd.log "$ROOT/" || true
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload core validation artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RANA2013_R13_CORE_KN_${{ matrix.tag }}_N75_100K
+          path: |
+            RANA2013_R13_CORE_KN_${{ matrix.tag }}_N75_100K.zip
+            RANA2013_R13_CORE_KN_${{ matrix.tag }}_N75_100K.zip.sha256
+          compression-level: 0
+          retention-days: 14
+
+      - name: Require clean complete result
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('case/analysis/core_validation_verdict.json')
+          if not p.is_file(): raise SystemExit('missing core validation verdict')
+          d=json.loads(p.read_text())
+          if not d['clean_complete_100k']:
+              raise SystemExit(f"core case incomplete: {d}")
+          print(json.dumps(d,indent=2))
+          PY
