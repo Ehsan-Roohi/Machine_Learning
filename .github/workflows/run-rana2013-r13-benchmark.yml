@@ -121,9 +121,9 @@ jobs:
           retention-days: 14
       - name: Package audited executable and source
         run: |
-          mkdir -p ASTR_RANA2013_R13_AUDITED
+          mkdir -p ASTR_RANA2013_R13_AUDITED/smoke_validation
           cp -a astr/src astr/build/bin/astr template_case rana2013_r13 audits patches RANA2013_R13_FORMULA_AUDIT.md ASTR_RANA2013_R13_AUDITED/
-          cp -a smoke_rana/analysis smoke_rana/smoke.log smoke_rana/smoke_status.txt smoke_rana/smoke_gate_report.json ASTR_RANA2013_R13_AUDITED/smoke_validation
+          cp -a smoke_rana/analysis smoke_rana/smoke.log smoke_rana/smoke_status.txt smoke_rana/smoke_gate_report.json ASTR_RANA2013_R13_AUDITED/smoke_validation/
       - uses: actions/upload-artifact@v4
         with:
           name: ASTR_RANA2013_R13_AUDITED_SOURCE
