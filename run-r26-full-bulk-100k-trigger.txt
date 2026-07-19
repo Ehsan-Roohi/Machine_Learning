@@ -1,0 +1,1 @@
+Resume the audited Gu-Emerson Maxwell R26 full-bulk path from the last fully validated step-70000 checkpoint after the original single job reached the six-hour runner limit. Preserve the identical formula patch and relaxed Appendix-C wall treatment; split continuation into 70k-to-84k and 84k-to-100k jobs, then validate matched R13/R26/DSMC checkpoints at 60k, 80k, and 100k.
