@@ -214,8 +214,8 @@ def main():
     ap.add_argument('--patch-output',type=Path,required=True)
     a=ap.parse_args()
     mm=a.astr/'src/methodmoment.F90'; bc=a.astr/'src/bc.F90'
-    cmake=a.astr/'src/CMakeLists.txt'
-    mm0=mm.read_text(); bc0=bc.read_text(); cmake0=cmake.read_text()
+    ml=a.astr/'src/mainloop.F90'; cmake=a.astr/'src/CMakeLists.txt'
+    mm0=mm.read_text(); bc0=bc.read_text(); ml0=ml.read_text(); cmake0=cmake.read_text()
     text=replace_sub(mm0,'mijkcal',MIJK)
     text=replace_sub(text,'rijcal',RIJ)
     text=replace_sub(text,'deltacal',DELTA)
@@ -230,6 +230,10 @@ def main():
     bc1,n3=re.subn(r'uwall\s*=\s*dble\(nstep\)\*deltat(?:\*10\.0d0)?\s*\n\s*if \(uwall > 1\.0d0\) uwall = 1\.0d0',
                    'uwall = min(1.0d0,dble(nstep)/1000.0d0)',bc0)
     if n2<1 or n3<1: raise RuntimeError(f'Lid-homotopy patches missing: method={n2}, bc={n3}')
+    ml1,n4=re.subn(r'(?m)^(\s*)call updatefvar\(q\)\s*$',
+                   r'\1call updatefvar(q,0,im,0,jm,0,km)',ml0)
+    if n4!=3:
+        raise RuntimeError(f'Expected three bare full-halo flow decodes, found {n4}')
     cmake_anchor='target_link_libraries(astr)\n'
     fpe_trap=('if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")\n'
               '  target_compile_options(astr PRIVATE -ffpe-trap=invalid -fbacktrace)\n'
@@ -239,11 +243,13 @@ def main():
     if '-ffpe-trap=invalid' in cmake0:
         raise RuntimeError('Unexpected pre-existing GNU invalid trap')
     cmake1=cmake0.replace(cmake_anchor,fpe_trap+'\n'+cmake_anchor,1)
-    mm.write_text(text); bc.write_text(bc1); cmake.write_text(cmake1)
+    mm.write_text(text); bc.write_text(bc1); ml.write_text(ml1); cmake.write_text(cmake1)
     patch=''.join(difflib.unified_diff(mm0.splitlines(True),text.splitlines(True),
         fromfile='astr/src/methodmoment.F90.upstream',tofile='astr/src/methodmoment.F90.rana2013'))
     patch+=''.join(difflib.unified_diff(bc0.splitlines(True),bc1.splitlines(True),
         fromfile='astr/src/bc.F90.upstream',tofile='astr/src/bc.F90.rana2013'))
+    patch+=''.join(difflib.unified_diff(ml0.splitlines(True),ml1.splitlines(True),
+        fromfile='astr/src/mainloop.F90.upstream',tofile='astr/src/mainloop.F90.rana2013'))
     patch+=''.join(difflib.unified_diff(cmake0.splitlines(True),cmake1.splitlines(True),
         fromfile='astr/src/CMakeLists.txt.upstream',tofile='astr/src/CMakeLists.txt.rana2013'))
     a.patch_output.parent.mkdir(parents=True,exist_ok=True); a.patch_output.write_text(patch)
@@ -272,10 +278,12 @@ def main():
       'moment_wall_cadence_normalized':'bc_relax_moment=1.0d0-(1.0d0-bc_relax_primary)**(subdeltat/deltat)' in text,
       'checkpoint_invariant_wall_solver':'checkpoint-invariant fixed-point iteration' in text,
       'gnu_invalid_trap_target':cmake1.count('target_compile_options(astr PRIVATE -ffpe-trap=invalid -fbacktrace)')==1,
+      'interior_only_bare_flow_decode':n4==3 and not re.search(r'(?m)^\s*call updatefvar\(q\)\s*$',ml1),
     }
     report={'reference':'Rana, Torrilhon & Struchtrup, JCP 236 (2013), Eqs. (3),(4),(7),(13)',
             'model':'full nonlinear transformed Maxwell R13 Eq. (13), cadence-normalized checkpoint-invariant fixed-point iteration of exact Eq. (7)',
             'checks':checks,'methodmoment_lid_replacements':n2,'bc_lid_replacements':n3,
+            'mainloop_interior_decode_replacements':n4,
             'all_passed':all(checks.values())}
     a.report.parent.mkdir(parents=True,exist_ok=True); a.report.write_text(json.dumps(report,indent=2))
     print(json.dumps(report,indent=2))
