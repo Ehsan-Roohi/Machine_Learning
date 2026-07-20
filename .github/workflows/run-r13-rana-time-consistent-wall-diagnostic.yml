@@ -1,0 +1,108 @@
+name: Diagnose time-consistent Rana R13 wall path
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'diagnostics/patch_r13_time_consistent_wall.py'
+      - '.github/workflows/run-r13-rana-time-consistent-wall-diagnostic.yml'
+      - 'run-r13-rana-time-consistent-wall-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  diagnostic:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - {tag: rana0354, kn: '0.354', grid: 75, lid: 50, steps: 10000}
+          - {tag: rana0707, kn: '0.707', grid: 75, lid: 50, steps: 10000}
+          - {tag: rana0071, kn: '0.071', grid: 75, lid: 50, steps: 20000}
+          - {tag: u100kn005, kn: '0.05', grid: 32, lid: 100, steps: 20000}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran cmake make openmpi-bin libopenmpi-dev libhdf5-openmpi-dev python3-h5py python3-numpy zip
+      - name: Download audited paper-exact R13 source
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          run-id: 29673135273
+          github-token: ${{ github.token }}
+          path: audited
+      - name: Apply numerical-path stabilization and rebuild
+        run: |
+          cp -a audited/astr ./astr
+          rm -rf astr/build
+          python3 diagnostics/patch_r13_time_consistent_wall.py astr --report stabilization_audit.json
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build --verbose -j 2
+          grep -F -- '-ffpe-trap=invalid' astr/build/src/CMakeFiles/astr.dir/flags.make
+          test -x astr/build/bin/astr
+      - name: Generate diagnostic case
+        run: |
+          cp audited/rana2013_r13/make_rana2013_case.py make_case.py
+          if [[ '${{ matrix.lid }}' != '50' ]]; then
+            sed -i 's/ULID=50.0/ULID=${{ matrix.lid }}.0/' make_case.py
+          fi
+          python3 make_case.py --template-case audited/template_case --output case \
+            --paper-kn ${{ matrix.kn }} --grid-points ${{ matrix.grid }} \
+            --maxstep ${{ matrix.steps }} --dt 1.0e-5 --checkpoint-every 1000
+      - name: Run diagnostic from equilibrium
+        id: solve
+        continue-on-error: true
+        env:
+          WALLCLOCK_MINUTES: 320
+          GFORTRAN_ERROR_BACKTRACE: '1'
+        run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$PWD/astr/build/bin/astr" "$PWD/audited/rana2013_r13/rana2013_reference.json"
+      - name: Build diagnostic verdict
+        if: always()
+        env:
+          SOLVE_OUTCOME: ${{ steps.solve.outcome }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re
+          import h5py,numpy as np
+          log=Path('case/logs/astr.log').read_text(errors='replace') if Path('case/logs/astr.log').exists() else ''
+          status=json.loads(Path('case/analysis/run_status.json').read_text()) if Path('case/analysis/run_status.json').exists() else {}
+          target=${{ matrix.steps }}
+          actual=int(status.get('last_checkpoint_step') or 0)
+          markers={x:len(re.findall(x,log,re.I)) for x in ['RANA_P_FAILURE','SIGFPE','IEEE_INVALID_FLAG','COMPUTATION CRASHED','NaN','Infinity']}
+          finite=True; positive=True
+          p=Path('case/outdat/flowfield.h5')
+          if p.exists():
+            with h5py.File(p,'r') as h:
+              def visit(n,o):
+                global finite
+                if isinstance(o,h5py.Dataset) and o.dtype.kind in 'fc' and not np.isfinite(o[...]).all():
+                  raise RuntimeError('nonfinite '+n)
+              h.visititems(visit)
+              positive=all(float(np.min(h[k][...]))>0 for k in ['ro','p','t'])
+          verdict={'tag':'${{ matrix.tag }}','kn':${{ matrix.kn }},'lid':${{ matrix.lid }},'target':target,'actual':actual,'solve_outcome':__import__('os').environ.get('SOLVE_OUTCOME'),'status':status,'markers':markers,'finite':finite,'positive':positive,'passed':actual==target and all(v==0 for v in markers.values()) and positive}
+          Path('diagnostic_verdict.json').write_text(json.dumps(verdict,indent=2)+'\n')
+          print(json.dumps(verdict,indent=2))
+          PY
+      - name: Package evidence
+        if: always()
+        run: |
+          ROOT=R13_RANA_TIME_CONSISTENT_${{ matrix.tag }}
+          mkdir -p "$ROOT"
+          cp -a case stabilization_audit.json diagnostic_verdict.json "$ROOT/" || true
+          cp -a astr/src/methodmoment.F90 astr/src/bc.F90 "$ROOT/" || true
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: R13_RANA_TIME_CONSISTENT_${{ matrix.tag }}
+          path: R13_RANA_TIME_CONSISTENT_${{ matrix.tag }}.zip
+          retention-days: 14
+          compression-level: 0
