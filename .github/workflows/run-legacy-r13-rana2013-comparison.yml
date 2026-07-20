@@ -1,0 +1,234 @@
+name: Compare untouched legacy R13 against Rana 2013
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/run-legacy-r13-rana2013-comparison.yml'
+      - 'run-legacy-r13-rana2013-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  legacy-r13-rana:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - {tag: kn0010, paper_kn: '0.010'}
+          - {tag: kn0071, paper_kn: '0.071'}
+          - {tag: kn00798, paper_kn: '0.0798'}
+          - {tag: kn0141, paper_kn: '0.141'}
+          - {tag: kn0354, paper_kn: '0.354'}
+          - {tag: kn03989, paper_kn: '0.3989'}
+          - {tag: kn0707, paper_kn: '0.707'}
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build and analysis dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran cmake make openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev unzip zip python3-h5py python3-numpy
+
+      - name: Download untouched initial R13 source artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: legacy_artifact
+
+      - name: Download Rana case generator and independent postprocessor
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          run-id: 29673135273
+          github-token: ${{ github.token }}
+          path: rana_tools
+
+      - name: Restore and audit the untouched legacy source
+        run: |
+          set -euxo pipefail
+          INNER=$(find legacy_artifact -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          test -n "$INNER"
+          mkdir legacy_unpack
+          unzip -q "$INNER" -d legacy_unpack
+          cp -a legacy_unpack/astr ./astr
+          rm -rf astr/build
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,re
+          root=Path('astr/src')
+          files=['methodmoment.F90','bc.F90','mainloop.F90','fludyna.F90']
+          sha={f:hashlib.sha256((root/f).read_bytes()).hexdigest() for f in files}
+          mm=(root/'methodmoment.F90').read_text(errors='replace')
+          audit={
+            'source_artifact_run':29624062741,
+            'source_artifact_name':'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005',
+            'source_artifact_digest':'sha256:32b674343e6a26212c57211bf5a21908055c227f0500f674802ac6e1444906b7',
+            'source_file_sha256':sha,
+            'legacy_wall_memory_present':all(x in mm for x in ['delbc12','m_tttbc12','r_ttbc12']),
+            'legacy_wall_relaxation_uses_deltat':'deltatp = deltat' in mm and 'deltatt = deltat' in mm,
+            'legacy_effective_pressure_fingerprint':'presw = presw + 0.5d0*sig_nn' in mm,
+            'paper_exact_helper_absent':'rana2013_wall_tensors' not in mm,
+            'time_consistent_relaxation_absent':'bc_relax_primary' not in mm and 'tau_bc' not in mm,
+            'no_solver_source_patch_applied':True,
+            'build_only_change':'examples are skipped when BUILD_TESTING=OFF because the archived Unicode example directory name is not portable'
+          }
+          assert all(audit[k] for k in ['legacy_wall_memory_present','legacy_wall_relaxation_uses_deltat','legacy_effective_pressure_fingerprint','paper_exact_helper_absent','time_consistent_relaxation_absent'])
+          Path('legacy_source_audit.json').write_text(json.dumps(audit,indent=2)+'\n')
+          print(json.dumps(audit,indent=2))
+          PY
+
+          # Build-system-only portability fix. No Fortran source is modified.
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('astr/CMakeLists.txt'); s=p.read_text()
+          old='''option(BUILD_TESTING "Build with tests" ON)\nset(test_dir "${PROJECT_BINARY_DIR}/Test")\nadd_subdirectory(examples)\nmessage(STATUS "Before test main ${test_dir}")'''
+          new='''option(BUILD_TESTING "Build with tests" ON)\nset(test_dir "${PROJECT_BINARY_DIR}/Test")\nif (BUILD_TESTING)\n  add_subdirectory(examples)\nendif()\nmessage(STATUS "Before test main ${test_dir}")'''
+          if old in s: p.write_text(s.replace(old,new,1))
+          elif new not in s: raise SystemExit('expected CMake examples block not found')
+          PY
+
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build --verbose -j 2
+          test -x astr/build/bin/astr
+
+      - name: Generate identical Rana comparison case
+        run: |
+          set -euxo pipefail
+          cp rana_tools/rana2013_r13/make_rana2013_case.py make_case.py
+          python3 make_case.py \
+            --template-case rana_tools/template_case \
+            --output case \
+            --paper-kn ${{ matrix.paper_kn }} \
+            --grid-points 75 \
+            --maxstep 100000 \
+            --dt 1.0e-5 \
+            --checkpoint-every 5000
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path('case/rana2013_case_metadata.json'); d=json.loads(p.read_text())
+          d.update({
+            'solver_variant':'untouched initial/legacy ASTR R13 source from GitHub Actions run 29624062741',
+            'solver_source_policy':'no paper-exact bulk patch, no Rana Eq.7 wall patch, no time-consistent wall patch, no corner-owner patch',
+            'moment':'legacy ASTR R13 implementation as originally archived',
+            'walls':'legacy ASTR R13wbc/R13wbc_slip with hidden relaxed wall arrays',
+            'comparison_policy':'same Rana case generator, N=75, U_lid=50 m/s, Kn mapping, dt cap, initial equilibrium and D/G postprocessor used for the corrected-code tests',
+            'scientific_warning':'this is a controlled empirical comparison, not a claim that the legacy equations equal Rana 2013 R13'
+          })
+          p.write_text(json.dumps(d,indent=2)+'\n')
+          PY
+
+      - name: Run untouched legacy R13 to 100k
+        id: solve
+        continue-on-error: true
+        env:
+          WALLCLOCK_MINUTES: 330
+          GFORTRAN_ERROR_BACKTRACE: '1'
+        run: |
+          bash rana_tools/rana2013_r13/run_rana2013_case.sh \
+            "$PWD/case" \
+            "$PWD/astr/build/bin/astr" \
+            "$PWD/rana_tools/rana2013_r13/rana2013_reference.json"
+
+      - name: Build controlled-comparison verdict
+        if: always()
+        env:
+          SOLVE_OUTCOME: ${{ steps.solve.outcome }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re,os
+          import h5py,numpy as np
+
+          status_path=Path('case/analysis/run_status.json')
+          status=json.loads(status_path.read_text()) if status_path.exists() else {}
+          summary_path=Path('case/analysis/rana2013_summary.json')
+          summary=json.loads(summary_path.read_text()) if summary_path.exists() else {}
+          log='\n'.join(p.read_text(errors='replace') for p in [Path('case/logs/astr.log'),Path('case/logs/astr_time.log')] if p.exists())
+          markers={x:len(re.findall(x,log,re.I)) for x in ['SIGSEGV','SIGFPE','IEEE_INVALID_FLAG','Floating-point exception','COMPUTATION CRASHED','NaN','Infinity']}
+          actual=int(status.get('last_checkpoint_step') or 0)
+          target=100000
+          finite=False; positive=False; exact_h5_step=None
+          f=Path('case/outdat/flowfield.h5')
+          if f.exists():
+            with h5py.File(f,'r') as h:
+              exact_h5_step=int(np.asarray(h['nstep']).reshape(-1)[0])
+              bad=[]
+              def visit(n,o):
+                if isinstance(o,h5py.Dataset) and o.dtype.kind in 'fc' and not np.isfinite(np.asarray(o[...])).all(): bad.append(n)
+              h.visititems(visit)
+              finite=not bad
+              positive=all(float(np.min(h[k][...]))>0 for k in ['ro','p','t'])
+          comparison=summary.get('paper_comparison')
+          changes=summary.get('last_checkpoint_relative_RMS_change_percent') or {}
+          max_change=max(changes.values()) if changes else None
+          completed=actual==target and exact_h5_step==target and status.get('return_code')==0 and finite and positive and all(v==0 for v in markers.values())
+          verdict={
+            'tag':'${{ matrix.tag }}',
+            'paper_kn':${{ matrix.paper_kn }},
+            'solver_variant':'untouched legacy ASTR R13',
+            'source_run':29624062741,
+            'target':target,
+            'actual':actual,
+            'exact_h5_step':exact_h5_step,
+            'run_status':status,
+            'solve_outcome':os.environ.get('SOLVE_OUTCOME'),
+            'runtime_markers':markers,
+            'finite':finite,
+            'positive_rho_p_t':positive,
+            'D':(summary.get('metrics') or {}).get('D_abs'),
+            'G':(summary.get('metrics') or {}).get('G'),
+            'paper_comparison':comparison,
+            'max_last_checkpoint_RMS_change_percent':max_change,
+            'completed_100k_cleanly':completed,
+            'steady_not_claimed':not (completed and max_change is not None and max_change < 0.1),
+            'interpretation':'Controlled comparison only. Legacy source is intentionally not paper-exact.'
+          }
+          Path('legacy_r13_rana_verdict.json').write_text(json.dumps(verdict,indent=2)+'\n')
+          print(json.dumps(verdict,indent=2))
+          PY
+
+      - name: Package source fingerprints and all numerical evidence
+        if: always()
+        run: |
+          ROOT=LEGACY_R13_RANA_${{ matrix.tag }}
+          mkdir -p "$ROOT/source" "$ROOT/evidence"
+          cp legacy_source_audit.json legacy_r13_rana_verdict.json "$ROOT/"
+          cp astr/src/methodmoment.F90 astr/src/bc.F90 astr/src/mainloop.F90 astr/src/fludyna.F90 "$ROOT/source/"
+          cp -a case/. "$ROOT/evidence/" || true
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload legacy R13 Rana evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LEGACY_R13_RANA_${{ matrix.tag }}
+          path: |
+            LEGACY_R13_RANA_${{ matrix.tag }}.zip
+            LEGACY_R13_RANA_${{ matrix.tag }}.zip.sha256
+          retention-days: 14
+          compression-level: 0
+
+      - name: Scientific completion gate
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          v=json.load(open('legacy_r13_rana_verdict.json'))
+          if not v['completed_100k_cleanly']:
+              raise SystemExit('Legacy R13 case did not complete a clean 100k trajectory; see uploaded evidence.')
+          PY
