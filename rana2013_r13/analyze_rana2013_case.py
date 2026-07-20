@@ -5,6 +5,11 @@ from pathlib import Path
 import h5py
 import numpy as np
 
+_trapezoid = getattr(np, "trapezoid", None)
+if _trapezoid is None:  # NumPy < 2.0
+    _trapezoid = np.trapz
+    np.trapezoid = _trapezoid
+
 GAMMA=5.0/3.0
 
 def global_metrics(sigmaxy,u1,x,y,mach,speed_ratio,gamma=GAMMA):
@@ -34,18 +39,18 @@ def global_metrics(sigmaxy,u1,x,y,mach,speed_ratio,gamma=GAMMA):
     if not np.isclose(const2,speed_ratio**2,rtol=2e-8,atol=1e-14):
         raise ValueError(f'inconsistent nondimensionalization: gamma*Ma^2={const2}, U*^2={speed_ratio**2}')
     iy_top=int(np.argmax(y))
-    raw_integral=float(np.trapezoid(sigmaxy[iy_top,:],x))
+    raw_integral=float(_trapezoid(sigmaxy[iy_top,:],x))
     sigma_over_p0_signed=const2*raw_integral
     reduced_factor=1.0/(np.sqrt(2.0)*speed_ratio)
     reduced_signed=reduced_factor*sigma_over_p0_signed
     umid=np.asarray([np.interp(0.5,x,row) for row in u1])
-    G=float(np.trapezoid(np.abs(umid),y))
+    G=float(_trapezoid(np.abs(umid),y))
     if x.size>2:
-        corner_excluded=float(np.trapezoid(sigmaxy[iy_top,1:-1],x[1:-1]))
+        corner_excluded=float(_trapezoid(sigmaxy[iy_top,1:-1],x[1:-1]))
         endpoint_contribution=raw_integral-corner_excluded
     else:
         corner_excluded=float('nan'); endpoint_contribution=float('nan')
-    adjacent_raw=float(np.trapezoid(sigmaxy[max(0,iy_top-1),:],x))
+    adjacent_raw=float(_trapezoid(sigmaxy[max(0,iy_top-1),:],x))
     return {
         'D_signed':reduced_signed,
         'D_abs':abs(reduced_signed),
