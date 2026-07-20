@@ -1,0 +1,116 @@
+name: Audit Rana reduced-D oracle
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/audit-rana-reduced-D-oracle.yml'
+      - 'rana2013_r13/analyze_rana2013_case.py'
+      - 'rana2013_r13/test_rana2013_global_metrics.py'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  reduced-D-oracle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install analysis dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip zip python3-h5py python3-numpy
+
+      - name: Run manufactured oracle tests
+        run: |
+          python3 rana2013_r13/test_rana2013_global_metrics.py 2>&1 | tee static_tests.log
+          grep -F RANA_REDUCED_D_ORACLE_STATIC_TESTS_PASS static_tests.log
+
+      - name: Download the completed legacy Kn 0.010 evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: LEGACY_R13_RANA_kn0010
+          run-id: 29712313364
+          github-token: ${{ github.token }}
+          path: legacy_artifact
+
+      - name: Recompute D and G from the unchanged HDF5 state
+        run: |
+          set -euxo pipefail
+          INNER=$(find legacy_artifact -name 'LEGACY_R13_RANA_kn0010.zip' -print -quit)
+          test -n "$INNER"
+          mkdir legacy_unpack
+          unzip -q "$INNER" -d legacy_unpack
+          CASE=legacy_unpack/LEGACY_R13_RANA_kn0010/evidence
+          test -f "$CASE/outdat/flowfield.h5"
+          python3 rana2013_r13/analyze_rana2013_case.py "$CASE" \
+            --reference rana2013_r13/rana2013_reference.json \
+            --output-dir corrected_analysis 2>&1 | tee corrected_analysis.log
+
+      - name: Build regression verdict
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, math
+
+          s=json.loads(Path('corrected_analysis/rana2013_summary.json').read_text())
+          m=s['metrics']; p=s['paper_comparison']
+          expected_old=0.02099330232827577
+          expected_new=0.07076922239308421
+          expected_factor=3.3710381190369234
+          assert math.isclose(m['D_sigma_over_p0_abs'],expected_old,rel_tol=0,abs_tol=2e-13),m
+          assert math.isclose(m['D_reduced_abs'],expected_new,rel_tol=0,abs_tol=2e-13),m
+          assert math.isclose(m['D_reduced_stress_factor'],expected_factor,rel_tol=0,abs_tol=2e-13),m
+          assert m['D_abs']==m['D_reduced_abs'],m
+          assert math.isclose(m['const2'],m['speed_ratio_U_over_sqrt_theta0']**2,rel_tol=2e-8),m
+          assert p['D_percent_error'] < -55.3 and p['D_percent_error'] > -55.4,p
+          verdict={
+            'passed':True,
+            'source_run':29712313364,
+            'source_artifact':'LEGACY_R13_RANA_kn0010',
+            'hdf5_unchanged':True,
+            'old_incorrect_sigma_over_p0_D':m['D_sigma_over_p0_abs'],
+            'correct_Rana_reduced_D':m['D_reduced_abs'],
+            'Rana_table_D':p['paper']['D_R13'],
+            'corrected_D_error_percent':p['D_percent_error'],
+            'G_centerline_interpolated':m['G'],
+            'Rana_table_G':p['paper']['G_R13'],
+            'remaining_interpretation':'Normalization bug fixed; remaining D gap is physical/numerical and must not be fitted away.',
+            'solver_run_started':False,
+            'paper_definition':'bar(sigma_xy)/p0 = (sigma_xy/p0)/(sqrt(2)*U_lid/sqrt(theta0))',
+          }
+          Path('rana_reduced_D_oracle_verdict.json').write_text(json.dumps(verdict,indent=2)+'\n')
+          print(json.dumps(verdict,indent=2))
+          PY
+
+      - name: Package audit evidence
+        run: |
+          ROOT=RANA2013_REDUCED_D_ORACLE_AUDIT
+          mkdir -p "$ROOT"
+          cp static_tests.log corrected_analysis.log rana_reduced_D_oracle_verdict.json "$ROOT/"
+          cp -a corrected_analysis "$ROOT/"
+          cp rana2013_r13/analyze_rana2013_case.py rana2013_r13/test_rana2013_global_metrics.py "$ROOT/"
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload audit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: RANA2013_REDUCED_D_ORACLE_AUDIT
+          path: |
+            RANA2013_REDUCED_D_ORACLE_AUDIT.zip
+            RANA2013_REDUCED_D_ORACLE_AUDIT.zip.sha256
+          retention-days: 14
+          compression-level: 0
+
+      - name: Scientific gate
+        run: |
+          python3 - <<'PY'
+          import json
+          d=json.load(open('rana_reduced_D_oracle_verdict.json'))
+          assert d['passed'] is True,d
+          assert d['solver_run_started'] is False,d
+          PY
