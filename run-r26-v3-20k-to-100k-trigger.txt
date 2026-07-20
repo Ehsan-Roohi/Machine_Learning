@@ -1,0 +1,1 @@
+Recovered R26-v3 20k endpoint from run 29707336380 passed: actual=20000, solver_return_code=0, all configured runtime markers zero, all floating HDF5 datasets finite, and rho/p/T positive. Trigger guarded diagnostic continuation to 40k, 60k, 80k, and 100k. Scientific caveat: legacy R26 wall-memory arrays are not serialized and reset at each restart.
