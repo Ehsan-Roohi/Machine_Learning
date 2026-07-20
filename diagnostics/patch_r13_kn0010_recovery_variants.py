@@ -5,6 +5,7 @@ from pathlib import Path
 
 VARIANTS = {
     'owner_nomass': dict(owner=True, mass=False, extrap=False, zero_top_corner=False, alternating=False),
+    'owner_nomass_extrap': dict(owner=True, mass=False, extrap=True, zero_top_corner=False, alternating=False),
     'owner_mass': dict(owner=True, mass=True, extrap=False, zero_top_corner=False, alternating=False),
     'owner_mass_extrap': dict(owner=True, mass=True, extrap=True, zero_top_corner=False, alternating=False),
     'zero_corner_mass_extrap': dict(owner=True, mass=True, extrap=True, zero_top_corner=True, alternating=False),
