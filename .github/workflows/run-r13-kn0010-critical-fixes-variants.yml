@@ -1,0 +1,287 @@
+name: Diagnose critical R13 fixes on Rana Kn 0.010
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/run-r13-kn0010-critical-fixes-variants.yml'
+      - 'diagnostics/patch_r13_kn0010_recovery_variants.py'
+      - 'diagnostics/analyze_kn0010_recovery_variant.py'
+      - 'run-r13-kn0010-critical-fixes-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  owner-nomass-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MPI HDF5 build and analysis dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran cmake make openmpi-bin libopenmpi-dev libhdf5-openmpi-dev unzip zip python3-h5py python3-numpy
+
+      - name: Download audited paper-equation R13 source
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          run-id: 29673135273
+          github-token: ${{ github.token }}
+          path: audited
+
+      - name: Patch and build owner_nomass smoke source
+        run: |
+          set -euxo pipefail
+          cp -a audited/astr ./astr
+          rm -rf astr/build
+          python3 diagnostics/patch_r13_kn0010_recovery_variants.py astr \
+            --variant owner_nomass \
+            --report patch_owner_nomass_smoke.json 2>&1 | tee patch_owner_nomass_smoke.log
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          d=json.loads(Path('patch_owner_nomass_smoke.json').read_text())
+          assert d['all_passed'] is True,d
+          assert d['optional_guard_counts']['parallel']=={'inline':11,'block':11,'remaining':0},d
+          assert d['optional_guard_counts']['methodmoment']=={'inline':3,'block':4,'remaining':0},d
+          text=(Path('astr/src/parallel.F90').read_text()+Path('astr/src/methodmoment.F90').read_text())
+          assert not re.search(r'present\s*\(\s*timerept\s*\)\s*\.and\.\s*timerept',text,re.I)
+          PY
+          cmake -S astr -B astr/build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=OFF \
+            '-DCMAKE_Fortran_FLAGS=-ffpe-trap=invalid -fbacktrace -g' 2>&1 | tee cmake_owner_nomass_smoke.log
+          cmake --build astr/build --verbose -j 2 2>&1 | tee build_owner_nomass_smoke.log
+          test -x astr/build/bin/astr
+          grep -F 'miucal=temper' astr/src/fludyna.F90
+          grep -F '4.0d0/(3.0d0*pv)' astr/src/methodmoment.F90
+          grep -F '0.5d0*stt-Deltav/(120.0d0*theta)-Rtt/(28.0d0*theta)' astr/src/methodmoment.F90
+
+      - name: Generate fresh 10-step smoke case
+        run: |
+          set -euxo pipefail
+          python3 audited/rana2013_r13/make_rana2013_case.py \
+            --template-case audited/template_case \
+            --output smoke_case \
+            --paper-kn 0.010 \
+            --grid-points 75 \
+            --maxstep 10 \
+            --dt 1.0e-5 \
+            --checkpoint-every 10
+          python3 - <<'PY'
+          from pathlib import Path
+          inp=next(Path('smoke_case/datin').glob('input.astr*'))
+          lines=inp.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# nondimen,diffterm,lfilter'):
+                  vals=[x.strip() for x in lines[i+1].split(',')]
+                  assert len(vals)>=3,vals
+                  vals[2]='f'
+                  lines[i+1]=','.join(vals)
+                  break
+          else:
+              raise RuntimeError('lfilter line not found')
+          inp.write_text('\n'.join(lines)+'\n')
+          PY
+
+      - name: Run 10-step smoke
+        env:
+          WALLCLOCK_MINUTES: 45
+          GFORTRAN_ERROR_BACKTRACE: '1'
+        run: |
+          set -o pipefail
+          bash audited/rana2013_r13/run_rana2013_case.sh \
+            "$PWD/smoke_case" \
+            "$PWD/astr/build/bin/astr" \
+            "$PWD/audited/rana2013_r13/rana2013_reference.json" 2>&1 | tee smoke_wrapper.log
+
+      - name: Validate smoke endpoint
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re,h5py,numpy as np
+          status=json.loads(Path('smoke_case/analysis/run_status.json').read_text())
+          assert int(status.get('last_checkpoint_step') or 0)==10,status
+          assert int(status.get('return_code') or 0)==0,status
+          log=Path('smoke_case/logs/astr.log').read_text(errors='replace')
+          markers={m:len(re.findall(m,log,re.I)) for m in ['SIGSEGV','SIGFPE','IEEE_INVALID_FLAG','Floating-point exception','COMPUTATION CRASHED','NaN','Infinity']}
+          assert all(v==0 for v in markers.values()),markers
+          with h5py.File('smoke_case/outdat/flowfield.h5','r') as h:
+              assert int(np.asarray(h['nstep']).reshape(-1)[0])==10
+              bad=[]
+              def visit(name,obj):
+                  if isinstance(obj,h5py.Dataset) and obj.dtype.kind in 'fc' and not np.isfinite(np.asarray(obj[...])).all(): bad.append(name)
+              h.visititems(visit)
+              assert not bad,bad
+              for k in ('ro','p','t'):
+                  assert float(np.min(np.asarray(h[k],float)))>0,k
+          Path('smoke_verdict.json').write_text(json.dumps({'passed':True,'step':10,'markers':markers},indent=2)+'\n')
+          print(Path('smoke_verdict.json').read_text())
+          PY
+
+      - name: Package smoke evidence
+        if: always()
+        run: |
+          ROOT=R13_KN0010_OWNER_NOMASS_SMOKE
+          mkdir -p "$ROOT"
+          cp -a smoke_case "$ROOT/" || true
+          cp -a patch_owner_nomass_smoke.json patch_owner_nomass_smoke.log cmake_owner_nomass_smoke.log build_owner_nomass_smoke.log smoke_wrapper.log smoke_verdict.json "$ROOT/" || true
+          cp -a astr/src/methodmoment.F90 astr/src/bc.F90 astr/src/fludyna.F90 astr/src/mainloop.F90 astr/src/parallel.F90 "$ROOT/" || true
+          sha256sum "$ROOT"/*.F90 > "$ROOT/source_sha256.txt" || true
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R13_KN0010_OWNER_NOMASS_SMOKE
+          path: R13_KN0010_OWNER_NOMASS_SMOKE.zip
+          retention-days: 14
+          compression-level: 0
+
+  kn0010-variant:
+    needs: owner-nomass-smoke
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        variant:
+          - owner_nomass
+          - owner_mass
+          - owner_mass_extrap
+          - zero_corner_mass_extrap
+          - alternating_mass_extrap
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MPI HDF5 build and analysis dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran cmake make openmpi-bin libopenmpi-dev libhdf5-openmpi-dev unzip zip python3-h5py python3-numpy
+
+      - name: Download audited paper-equation R13 source
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          run-id: 29673135273
+          github-token: ${{ github.token }}
+          path: audited
+
+      - name: Apply selected critical/high-fix variant and build
+        run: |
+          set -euxo pipefail
+          cp -a audited/astr ./astr
+          rm -rf astr/build
+          python3 diagnostics/patch_r13_kn0010_recovery_variants.py astr \
+            --variant '${{ matrix.variant }}' \
+            --report "patch_${{ matrix.variant }}.json" 2>&1 | tee "patch_${{ matrix.variant }}.log"
+          cmake -S astr -B astr/build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DBUILD_TESTING=OFF \
+            '-DCMAKE_Fortran_FLAGS=-ffpe-trap=invalid -fbacktrace -g' 2>&1 | tee "cmake_${{ matrix.variant }}.log"
+          cmake --build astr/build --verbose -j 2 2>&1 | tee "build_${{ matrix.variant }}.log"
+          test -x astr/build/bin/astr
+          grep -F 'miucal=temper' astr/src/fludyna.F90
+          grep -F '4.0d0/(3.0d0*pv)' astr/src/methodmoment.F90
+          grep -F '0.5d0*stt-Deltav/(120.0d0*theta)-Rtt/(28.0d0*theta)' astr/src/methodmoment.F90
+
+      - name: Generate identical fresh Rana Kn 0.010 case with filter disabled
+        run: |
+          set -euxo pipefail
+          python3 audited/rana2013_r13/make_rana2013_case.py \
+            --template-case audited/template_case \
+            --output case \
+            --paper-kn 0.010 \
+            --grid-points 75 \
+            --maxstep 30000 \
+            --dt 1.0e-5 \
+            --checkpoint-every 1000
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          inp=next(Path('case/datin').glob('input.astr*'))
+          lines=inp.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# nondimen,diffterm,lfilter'):
+                  vals=[x.strip() for x in lines[i+1].split(',')]
+                  assert len(vals)>=3, vals
+                  vals[2]='f'
+                  lines[i+1]=','.join(vals)
+                  break
+          else:
+              raise RuntimeError('lfilter input line not found')
+          inp.write_text('\n'.join(lines)+'\n')
+          meta_path=Path('case/rana2013_case_metadata.json')
+          meta=json.loads(meta_path.read_text())
+          meta.update({
+            'variant':'${{ matrix.variant }}',
+            'filter_enabled':False,
+            'target_step':30000,
+            'comparison_purpose':'Rana Kn=0.010 critical/high-fix controlled diagnostic',
+            'corner_discretization_warning':'No variant is the exact coupled Eq.(20) matrix solve.'
+          })
+          meta_path.write_text(json.dumps(meta,indent=2)+'\n')
+          PY
+
+      - name: Run fresh variant through the prior 20405 failure point
+        id: solve
+        continue-on-error: true
+        env:
+          WALLCLOCK_MINUTES: 320
+          GFORTRAN_ERROR_BACKTRACE: '1'
+        run: |
+          bash audited/rana2013_r13/run_rana2013_case.sh \
+            "$PWD/case" \
+            "$PWD/astr/build/bin/astr" \
+            "$PWD/audited/rana2013_r13/rana2013_reference.json"
+
+      - name: Build independent D G mass convergence verdict
+        if: always()
+        run: |
+          set +e
+          python3 diagnostics/analyze_kn0010_recovery_variant.py \
+            --case case \
+            --variant '${{ matrix.variant }}' \
+            --target 30000 \
+            --output "recovery_verdict_${{ matrix.variant }}.json"
+          echo $? > analysis_rc.txt
+          set -e
+
+      - name: Package complete evidence
+        if: always()
+        run: |
+          ROOT="R13_KN0010_RECOVERY_${{ matrix.variant }}"
+          mkdir -p "$ROOT"
+          cp -a case "$ROOT/" || true
+          cp -a "patch_${{ matrix.variant }}.json" "patch_${{ matrix.variant }}.log" "cmake_${{ matrix.variant }}.log" "build_${{ matrix.variant }}.log" "recovery_verdict_${{ matrix.variant }}.json" analysis_rc.txt "$ROOT/" || true
+          cp -a astr/src/methodmoment.F90 astr/src/bc.F90 astr/src/fludyna.F90 astr/src/mainloop.F90 astr/src/parallel.F90 "$ROOT/" || true
+          sha256sum "$ROOT"/*.F90 > "$ROOT/source_sha256.txt" || true
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+
+      - name: Upload variant evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: R13_KN0010_RECOVERY_${{ matrix.variant }}
+          path: R13_KN0010_RECOVERY_${{ matrix.variant }}.zip
+          retention-days: 14
+          compression-level: 0
+
+      - name: Scientific completion gate
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('recovery_verdict_${{ matrix.variant }}.json')
+          assert p.exists(), 'missing independent verdict'
+          d=json.loads(p.read_text())
+          print(json.dumps(d,indent=2))
+          assert d['completed_cleanly'] is True, d
+          PY
