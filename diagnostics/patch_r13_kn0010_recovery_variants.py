@@ -53,11 +53,12 @@ def patch_maxwell(fl: str) -> str:
     old='miucal=temper*sqrt(temper)*tempconst1/(temper+tempconst)'
     return replace_exact(fl,old,'miucal=temper',1,'Maxwell viscosity')
 
-def patch_optional_guards(mm: str, par: str) -> tuple[str,str,dict]:
-    """Replace every unsafe PRESENT(x).and.x optional-logical guard.
+def patch_optional_guards_tree(src: Path) -> dict:
+    """Patch every unsafe PRESENT(timerept).and.timerept expression in ASTR.
 
-    Fortran does not guarantee short-circuit evaluation, so an absent optional
-    logical must never be referenced in the same expression as PRESENT().
+    The upstream source repeats this non-short-circuit-safe idiom across several
+    modules. Patching only the first crashing module merely moves the SIGSEGV.
+    Therefore every Fortran source under src/ is audited and patched together.
     """
     unsafe = re.compile(
         r"present\s*\(\s*timerept\s*\)\s*\.and\.\s*timerept",
@@ -74,35 +75,44 @@ def patch_optional_guards(mm: str, par: str) -> tuple[str,str,dict]:
         re.IGNORECASE | re.MULTILINE | re.DOTALL,
     )
 
-    def patch_one(name: str, text: str) -> tuple[str,dict]:
-        n_inline=len(list(inline.finditer(text)))
-        text=inline.sub(
-            lambda m:(
+    report = {}
+    total_inline = total_block = 0
+    for path in sorted(src.rglob('*.F90')):
+        text = path.read_text()
+        n_inline = len(list(inline.finditer(text)))
+        text = inline.sub(
+            lambda m: (
                 f"{m.group('indent')}if (present(timerept)) then\n"
                 f"{m.group('indent')}  if (timerept) time_beg=ptime()\n"
                 f"{m.group('indent')}end if"
             ), text)
-        n_block=len(list(block.finditer(text)))
-        text=block.sub(
-            lambda m:(
+        n_block = len(list(block.finditer(text)))
+        text = block.sub(
+            lambda m: (
                 f"{m.group('indent')}if (present(timerept)) then\n"
                 f"{m.group('indent')}  if (timerept) then\n"
                 f"{m.group('body')}"
                 f"{m.group('indent')}  end if\n"
                 f"{m.group('indent')}end if"
             ), text)
-        remaining=len(unsafe.findall(text))
+        remaining = len(unsafe.findall(text))
         if remaining:
-            raise RuntimeError(f"{name}: {remaining} unsafe optional-logical expressions remain")
-        return text,{'inline':n_inline,'block':n_block,'remaining':remaining}
+            raise RuntimeError(f"{path.name}: {remaining} unsafe timerept expressions remain")
+        if n_inline or n_block:
+            path.write_text(text)
+            report[path.name] = {'inline':n_inline,'block':n_block,'remaining':0}
+            total_inline += n_inline
+            total_block += n_block
 
-    mm,mm_counts=patch_one('methodmoment',mm)
-    par,par_counts=patch_one('parallel',par)
-    if par_counts['inline'] != 11 or par_counts['block'] != 11:
-        raise RuntimeError(f"parallel optional-guard count mismatch: {par_counts}")
-    if mm_counts['inline'] != 3 or mm_counts['block'] != 4:
-        raise RuntimeError(f"methodmoment optional-guard count mismatch: {mm_counts}")
-    return mm,par,{'methodmoment':mm_counts,'parallel':par_counts}
+    if total_inline != 40 or total_block != 44:
+        raise RuntimeError(
+            f'global optional-guard count mismatch: inline={total_inline}, block={total_block}, files={report}'
+        )
+    leftovers=[]
+    for path in sorted(src.rglob('*.F90')):
+        if unsafe.search(path.read_text()): leftovers.append(path.name)
+    if leftovers: raise RuntimeError(f'unsafe optional guards remain in {leftovers}')
+    return {'files':report,'total_inline':total_inline,'total_block':total_block,'remaining':0}
 
 EXTRAP_HELPERS='''
   ! Diagnostic paper-like one-sided extrapolation for unconstrained face data.
@@ -263,7 +273,6 @@ def main():
     mm=paths['methodmoment.F90'].read_text(); bc=paths['bc.F90'].read_text(); fl=paths['fludyna.F90'].read_text(); mainf=paths['mainloop.F90'].read_text(); par=paths['parallel.F90'].read_text()
     mm,bc=patch_time_consistent(mm,bc)
     fl=patch_maxwell(fl)
-    mm,par,optional_guard_counts=patch_optional_guards(mm,par)
     mainf=patch_closure_refresh(mainf)
     if cfg['mass']: mainf=patch_mass(mainf)
     if cfg['extrap']: mm=patch_extrap(mm)
@@ -272,6 +281,9 @@ def main():
     if cfg['zero_top_corner']: mm,bc=patch_zero_top_corners(mm,bc)
     if cfg['alternating']: mm,bc=patch_alternating_order(mm,bc)
     paths['methodmoment.F90'].write_text(mm); paths['bc.F90'].write_text(bc); paths['fludyna.F90'].write_text(fl); paths['mainloop.F90'].write_text(mainf); paths['parallel.F90'].write_text(par)
+    optional_guard_counts=patch_optional_guards_tree(src)
+    mm=paths['methodmoment.F90'].read_text(); bc=paths['bc.F90'].read_text(); fl=paths['fludyna.F90'].read_text(); mainf=paths['mainloop.F90'].read_text(); par=paths['parallel.F90'].read_text()
+    all_fortran=''.join(path.read_text() for path in sorted(src.rglob('*.F90')))
     checks={
       'maxwell':'miucal=temper' in fl,
       'filter_fixed_in_input_not_source':True,
@@ -283,7 +295,7 @@ def main():
       'alternating_order':(not cfg['alternating']) or 'mod(rkstep,2)' in bc,
       'eq13_unchanged':all(x in mm for x in ['4.0d0/(3.0d0*pv)','64.0d0/(25.0d0*pv)','56.0d0/(5.0d0*pv)']),
       'effective_pressure_unchanged':'0.5d0*stt-Deltav/(120.0d0*theta)-Rtt/(28.0d0*theta)' in mm,
-      'optional_guards_safe': not re.search(r'present\s*\(\s*timerept\s*\)\s*\.and\.\s*timerept',mm+par,re.IGNORECASE),
+      'optional_guards_safe': not re.search(r'present\s*\(\s*timerept\s*\)\s*\.and\.\s*timerept',all_fortran,re.IGNORECASE),
     }
     rep={'variant':a.variant,'config':cfg,'checks':checks,'optional_guard_counts':optional_guard_counts,'all_passed':all(checks.values()),'scientific_boundary':'diagnostic pseudo-time variants; none is the exact coupled Eq.20 matrix solve'}
     a.report.parent.mkdir(parents=True,exist_ok=True); a.report.write_text(json.dumps(rep,indent=2)+'\n'); print(json.dumps(rep,indent=2))
