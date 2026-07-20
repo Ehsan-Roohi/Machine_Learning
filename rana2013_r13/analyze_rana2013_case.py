@@ -7,6 +7,62 @@ import numpy as np
 
 GAMMA=5.0/3.0
 
+def global_metrics(sigmaxy,u1,x,y,mach,speed_ratio,gamma=GAMMA):
+    """Return Rana/Sharipov reduced drag and centerline flow rate.
+
+    Rana et al. Eq. (30) uses the barred (low-speed reduced) shear
+    inherited from the driven-cavity kinetic benchmark, not bare
+    sigma_xy/p0.  For ASTR's dynamic-pressure stress scale,
+
+      sigma_xy/p0 = gamma*Ma**2 * sigma_xy_ASTR
+      bar(sigma_xy)/p0 = (sigma_xy/p0)/(sqrt(2)*U*)
+
+    where U*=U_lid/sqrt(theta0).
+    """
+    sigmaxy=np.asarray(sigmaxy,dtype=float); u1=np.asarray(u1,dtype=float)
+    x=np.asarray(x,dtype=float); y=np.asarray(y,dtype=float)
+    if sigmaxy.shape != (y.size,x.size):
+        raise ValueError(f'sigmaxy shape {sigmaxy.shape} != (ny,nx) {(y.size,x.size)}')
+    if u1.shape != sigmaxy.shape:
+        raise ValueError(f'u1 shape {u1.shape} != sigmaxy shape {sigmaxy.shape}')
+    if not (np.all(np.diff(x)>0) and np.all(np.diff(y)>0)):
+        raise ValueError('x and y must be strictly increasing')
+    const2=float(gamma)*float(mach)**2
+    speed_ratio=float(speed_ratio)
+    if speed_ratio<=0:
+        raise ValueError('speed_ratio must be positive')
+    if not np.isclose(const2,speed_ratio**2,rtol=2e-8,atol=1e-14):
+        raise ValueError(f'inconsistent nondimensionalization: gamma*Ma^2={const2}, U*^2={speed_ratio**2}')
+    iy_top=int(np.argmax(y))
+    raw_integral=float(np.trapezoid(sigmaxy[iy_top,:],x))
+    sigma_over_p0_signed=const2*raw_integral
+    reduced_factor=1.0/(np.sqrt(2.0)*speed_ratio)
+    reduced_signed=reduced_factor*sigma_over_p0_signed
+    umid=np.asarray([np.interp(0.5,x,row) for row in u1])
+    G=float(np.trapezoid(np.abs(umid),y))
+    if x.size>2:
+        corner_excluded=float(np.trapezoid(sigmaxy[iy_top,1:-1],x[1:-1]))
+        endpoint_contribution=raw_integral-corner_excluded
+    else:
+        corner_excluded=float('nan'); endpoint_contribution=float('nan')
+    adjacent_raw=float(np.trapezoid(sigmaxy[max(0,iy_top-1),:],x))
+    return {
+        'D_signed':reduced_signed,
+        'D_abs':abs(reduced_signed),
+        'D_reduced_signed':reduced_signed,
+        'D_reduced_abs':abs(reduced_signed),
+        'D_sigma_over_p0_signed':sigma_over_p0_signed,
+        'D_sigma_over_p0_abs':abs(sigma_over_p0_signed),
+        'D_raw_ASTR_integral':raw_integral,
+        'D_reduced_stress_factor':reduced_factor,
+        'D_raw_corner_excluded_integral':corner_excluded,
+        'D_raw_endpoint_contribution':endpoint_contribution,
+        'D_raw_adjacent_row_integral':adjacent_raw,
+        'const2':const2,
+        'speed_ratio_U_over_sqrt_theta0':speed_ratio,
+        'G':G,
+    }
+
 def arr(h,key):
     a=np.asarray(h[key],dtype=float)
     return a[0] if a.ndim==3 else a
@@ -72,7 +128,8 @@ def main():
             if not np.isfinite(xv).all(): raise FloatingPointError(k)
         if np.min(fields['ro'])<=0 or np.min(fields['p'])<=0 or np.min(fields['t'])<=0: raise FloatingPointError('non-positive thermodynamic field')
         x=np.asarray(g['x'])[0,0,:]; y=np.asarray(g['y'])[0,:,0]; const2=GAMMA*meta['Mach']**2
-        signed_D=float(np.trapz(const2*fields['sigmaxy'][-1,:],x)); Dabs=abs(signed_D); ix=int(np.argmin(abs(x-0.5))); G=float(np.trapz(np.abs(fields['u1'][:,ix]),y)); wall=wall_residuals(h,const2); nstep=int(h['nstep'][0]); time=float(h['time'][0]); iy=int(np.argmin(abs(y-0.5)))
+        metrics=global_metrics(fields['sigmaxy'],fields['u1'],x,y,meta['Mach'],meta['speed_ratio_U_over_sqrt_theta0'])
+        signed_D=metrics['D_signed']; Dabs=metrics['D_abs']; G=metrics['G']; ix=int(np.argmin(abs(x-0.5))); wall=wall_residuals(h,const2); nstep=int(h['nstep'][0]); time=float(h['time'][0]); iy=int(np.argmin(abs(y-0.5)))
         rows=[]
         for j,Y in enumerate(y): rows.append({'line':'vertical_x_0p5','coordinate':float(Y),'u_over_lid':float(fields['u1'][j,ix]),'v_over_lid':float(fields['u2'][j,ix]),'T_over_T0':float(fields['t'][j,ix])})
         for i,X in enumerate(x): rows.append({'line':'horizontal_y_0p5','coordinate':float(X),'u_over_lid':float(fields['u1'][iy,i]),'v_over_lid':float(fields['u2'][iy,i]),'T_over_T0':float(fields['t'][iy,i])})
@@ -80,6 +137,6 @@ def main():
         w=csv.DictWriter(fp,fieldnames=rows[0].keys()); w.writeheader(); w.writerows(rows)
     key=f"{meta['paper_kn']:.3f}"; target=ref['global_metrics'].get(key); comparison=None
     if target: comparison={'paper':target,'D_percent_error':100*(Dabs-target['D_R13'])/target['D_R13'],'G_percent_error':100*(G-target['G_R13'])/target['G_R13']}
-    summary={'case_metadata':meta,'nstep':nstep,'time':time,'metrics':{'D_signed':signed_D,'D_abs':Dabs,'G':G},'paper_comparison':comparison,'wall_equation_relative_residuals':wall,'last_checkpoint_relative_RMS_change_percent':checkpoint_change(f,prev),'field_ranges':{k:{'min':float(v.min()),'max':float(v.max())} for k,v in fields.items()}}
+    summary={'case_metadata':meta,'nstep':nstep,'time':time,'metrics':metrics,'metric_definition':{'D':'Rana Eq. (30) barred/reduced shear; low-speed stress normalization inherited from the kinetic cavity benchmark','reduced_stress':'(sigma_xy/p0)/(sqrt(2)*U_lid/sqrt(theta0))','G':'integral of |u_x(x=0.5,y)|/U_lid'},'paper_comparison':comparison,'wall_equation_relative_residuals':wall,'last_checkpoint_relative_RMS_change_percent':checkpoint_change(f,prev),'field_ranges':{k:{'min':float(v.min()),'max':float(v.max())} for k,v in fields.items()}}
     (a.output_dir/'rana2013_summary.json').write_text(json.dumps(summary,indent=2)); print(json.dumps(summary,indent=2))
 if __name__=='__main__': main()
