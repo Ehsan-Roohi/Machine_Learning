@@ -112,7 +112,14 @@ def patch_optional_guards_tree(src: Path) -> dict:
     for path in sorted(src.rglob('*.F90')):
         if unsafe.search(path.read_text()): leftovers.append(path.name)
     if leftovers: raise RuntimeError(f'unsafe optional guards remain in {leftovers}')
-    return {'files':report,'total_inline':total_inline,'total_block':total_block,'remaining':0}
+    return {
+        'files':report,
+        'parallel':report['parallel.F90'],
+        'methodmoment':report['methodmoment.F90'],
+        'total_inline':total_inline,
+        'total_block':total_block,
+        'remaining':0,
+    }
 
 EXTRAP_HELPERS='''
   ! Diagnostic paper-like one-sided extrapolation for unconstrained face data.
