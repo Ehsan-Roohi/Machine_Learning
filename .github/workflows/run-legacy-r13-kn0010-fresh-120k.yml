@@ -1,0 +1,271 @@
+name: Extend legacy R13 Rana Kn 0.010 fresh to 120k
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/run-legacy-r13-kn0010-fresh-120k.yml'
+      - 'diagnostics/patch_optional_logical_guards_all.py'
+      - 'run-legacy-r13-kn0010-fresh-120k-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  legacy-r13-kn0010-fresh-120k:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran cmake make openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev unzip zip python3-h5py python3-numpy
+
+      - name: Download exact legacy R13 source artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: legacy_artifact
+
+      - name: Download Rana case and analysis tools
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          run-id: 29673135273
+          github-token: ${{ github.token }}
+          path: rana_tools
+
+      - name: Restore legacy equations and apply infrastructure-only guard fix
+        run: |
+          set -euxo pipefail
+          INNER=$(find legacy_artifact -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          test -n "$INNER"
+          mkdir legacy_unpack
+          unzip -q "$INNER" -d legacy_unpack
+          cp -a legacy_unpack/astr ./astr
+          rm -rf astr/build
+
+          sha256sum astr/src/methodmoment.F90 astr/src/bc.F90 astr/src/mainloop.F90 astr/src/fludyna.F90 > legacy_equation_source_before.sha256
+
+          python3 diagnostics/patch_optional_logical_guards_all.py astr \
+            --report optional_guard_patch_report.json 2>&1 | tee optional_guard_patch.log
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re
+          d=json.loads(Path('optional_guard_patch_report.json').read_text())
+          assert d['all_passed'] is True,d
+          assert d['physics_changes'] is False,d
+          assert d['total_inline']==40 and d['total_block']==44,d
+          allsrc=''.join(p.read_text() for p in sorted(Path('astr/src').rglob('*.F90')))
+          assert not re.search(r'present\s*\(\s*timerept\s*\)\s*\.and\.\s*timerept',allsrc,re.I)
+          PY
+
+          # Build-system-only portability guard; no Fortran equation or wall formula is altered.
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('astr/CMakeLists.txt'); s=p.read_text()
+          old='''option(BUILD_TESTING "Build with tests" ON)
+          set(test_dir "${PROJECT_BINARY_DIR}/Test")
+          add_subdirectory(examples)
+          message(STATUS "Before test main ${test_dir}")'''.replace('          ','')
+          new='''option(BUILD_TESTING "Build with tests" ON)
+          set(test_dir "${PROJECT_BINARY_DIR}/Test")
+          if (BUILD_TESTING)
+            add_subdirectory(examples)
+          endif()
+          message(STATUS "Before test main ${test_dir}")'''.replace('          ','')
+          if old in s: p.write_text(s.replace(old,new,1))
+          elif new not in s: raise SystemExit('expected CMake examples block not found')
+          PY
+
+          cmake -S astr -B astr/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_TESTING=OFF \
+            '-DCMAKE_Fortran_FLAGS=-ffpe-trap=invalid -fbacktrace -g' 2>&1 | tee cmake.log
+          cmake --build astr/build --verbose -j 2 2>&1 | tee build.log
+          test -x astr/build/bin/astr
+
+      - name: Generate fresh uninterrupted Kn 0.010 case to 120k
+        run: |
+          set -euxo pipefail
+          python3 rana_tools/rana2013_r13/make_rana2013_case.py \
+            --template-case rana_tools/template_case \
+            --output case \
+            --paper-kn 0.010 \
+            --grid-points 75 \
+            --maxstep 120000 \
+            --dt 1.0e-5 \
+            --checkpoint-every 10000
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          p=Path('case/rana2013_case_metadata.json'); d=json.loads(p.read_text())
+          d.update({
+            'solver_variant':'legacy/original ASTR R13 equations with infrastructure-only optional-logical guards',
+            'source_run':29624062741,
+            'initial_state':'fresh global equilibrium; uninterrupted 0 to 120000',
+            'restart_used':False,
+            'physics_patch':'none',
+            'infrastructure_patch':'all unsafe PRESENT(timerept).and.timerept expressions replaced by nested PRESENT/IF guards',
+            'purpose':'determine whether legacy Kn=0.010 D and G continue drifting after 100k and whether the 100k IEEE invalid was infrastructure-related',
+          })
+          p.write_text(json.dumps(d,indent=2)+'\n')
+          PY
+
+      - name: Run fresh 0 to 120k and archive 90k 100k 110k 120k
+        id: solve
+        continue-on-error: true
+        env:
+          WALLCLOCK_MINUTES: 335
+          GFORTRAN_ERROR_BACKTRACE: '1'
+        run: |
+          set -o pipefail
+          mkdir -p archived_checkpoints
+          python3 - <<'PY' &
+          from pathlib import Path
+          import h5py, numpy as np, shutil, time
+          targets={90000,100000,110000,120000}
+          root=Path('case'); out=Path('archived_checkpoints')
+          while True:
+              f=root/'outdat/flowfield.h5'
+              try:
+                  if f.exists():
+                      with h5py.File(f,'r') as h:
+                          step=int(np.asarray(h['nstep']).reshape(-1)[0])
+                      if step in targets and not (out/f'step_{step:06d}').exists():
+                          d=out/f'step_{step:06d}'; d.mkdir()
+                          shutil.copy2(f,d/'flowfield.h5')
+                          a=root/'outdat/auxiliary.h5'
+                          if a.exists(): shutil.copy2(a,d/'auxiliary.h5')
+                          print('ARCHIVED',step,flush=True)
+                      if step>=120000: break
+              except Exception as e:
+                  print('WATCH_RETRY',repr(e),flush=True)
+              time.sleep(5)
+          PY
+          WATCHER=$!
+          bash rana_tools/rana2013_r13/run_rana2013_case.sh \
+            "$PWD/case" \
+            "$PWD/astr/build/bin/astr" \
+            "$PWD/rana_tools/rana2013_r13/rana2013_reference.json" 2>&1 | tee solve_wrapper.log
+          RC=${PIPESTATUS[0]}
+          echo "$RC" > solver_wrapper_rc.txt
+          kill "$WATCHER" 2>/dev/null || true
+          wait "$WATCHER" 2>/dev/null || true
+          exit "$RC"
+
+      - name: Analyze final and archived milestones
+        if: always()
+        run: |
+          set -euxo pipefail
+          mkdir -p milestone_analysis
+          python3 rana_tools/rana2013_r13/analyze_rana2013_case.py case \
+            --reference rana_tools/rana2013_r13/rana2013_reference.json \
+            --output-dir milestone_analysis/final_120k || true
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import shutil,subprocess,json
+          source=Path('case'); archive=Path('archived_checkpoints'); out=Path('milestone_analysis')
+          steps=[90000,100000,110000,120000]
+          for idx,step in enumerate(steps):
+              sf=archive/f'step_{step:06d}'/'flowfield.h5'
+              if not sf.exists():
+                  continue
+              c=out/f'case_{step:06d}'
+              (c/'outdat').mkdir(parents=True); (c/'bakup').mkdir(); (c/'datin').mkdir()
+              shutil.copy2(sf,c/'outdat/flowfield.h5')
+              aux=archive/f'step_{step:06d}'/'auxiliary.h5'
+              if aux.exists(): shutil.copy2(aux,c/'outdat/auxiliary.h5')
+              shutil.copy2(source/'datin/grid.h5',c/'datin/grid.h5')
+              shutil.copy2(source/'rana2013_case_metadata.json',c/'rana2013_case_metadata.json')
+              if idx>0:
+                  prev=archive/f'step_{steps[idx-1]:06d}'/'flowfield.h5'
+                  if prev.exists(): shutil.copy2(prev,c/'bakup/flowfield.h5')
+              aout=out/f'analysis_{step:06d}'
+              subprocess.run([
+                  'python3','rana_tools/rana2013_r13/analyze_rana2013_case.py',str(c),
+                  '--reference','rana_tools/rana2013_r13/rana2013_reference.json',
+                  '--output-dir',str(aout)
+              ],check=True)
+          rows=[]
+          for p in sorted(out.glob('analysis_*/rana2013_summary.json')):
+              d=json.loads(p.read_text()); pc=d.get('paper_comparison') or {}; m=d['metrics']
+              rows.append({
+                  'step':d['nstep'],'time':d['time'],'D':m['D_abs'],'G':m['G'],
+                  'D_percent_error':pc.get('D_percent_error'),'G_percent_error':pc.get('G_percent_error'),
+                  'max_checkpoint_change_percent':max((d.get('last_checkpoint_relative_RMS_change_percent') or {'none':float('nan')}).values())
+              })
+          Path('legacy_kn0010_milestone_comparison.json').write_text(json.dumps(rows,indent=2)+'\n')
+          print(json.dumps(rows,indent=2))
+          PY
+
+      - name: Build final verdict
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re,h5py,numpy as np
+          status_path=Path('case/analysis/run_status.json')
+          status=json.loads(status_path.read_text()) if status_path.exists() else {}
+          log='\n'.join(p.read_text(errors='replace') for p in [Path('case/logs/astr.log'),Path('case/logs/astr_time.log'),Path('solve_wrapper.log')] if p.exists())
+          markers={x:len(re.findall(x,log,re.I)) for x in ['SIGSEGV','SIGFPE','IEEE_INVALID_FLAG','Floating-point exception','COMPUTATION CRASHED','NaN','Infinity']}
+          finite=positive=False; step=0
+          f=Path('case/outdat/flowfield.h5')
+          if f.exists():
+              with h5py.File(f,'r') as h:
+                  step=int(np.asarray(h['nstep']).reshape(-1)[0]); bad=[]
+                  def visit(n,o):
+                      if isinstance(o,h5py.Dataset) and o.dtype.kind in 'fc' and not np.isfinite(np.asarray(o[...])).all(): bad.append(n)
+                  h.visititems(visit); finite=not bad
+                  positive=all(float(np.min(np.asarray(h[k],float)))>0 for k in ['ro','p','t'])
+          milestones=json.loads(Path('legacy_kn0010_milestone_comparison.json').read_text()) if Path('legacy_kn0010_milestone_comparison.json').exists() else []
+          verdict={
+              'target':120000,'actual':step,'run_status':status,'runtime_markers':markers,
+              'finite':finite,'positive_rho_p_t':positive,'milestones':milestones,
+              'clean_120k':step==120000 and finite and positive and all(v==0 for v in markers.values()),
+              'scientific_scope':'fresh uninterrupted legacy-equation diagnostic; not LR13 and not paper-exact nonlinear R13'
+          }
+          Path('legacy_kn0010_fresh_120k_verdict.json').write_text(json.dumps(verdict,indent=2)+'\n')
+          print(json.dumps(verdict,indent=2))
+          PY
+
+      - name: Package evidence
+        if: always()
+        run: |
+          ROOT=LEGACY_R13_KN0010_FRESH_120K
+          mkdir -p "$ROOT/source" "$ROOT/evidence"
+          cp optional_guard_patch_report.json optional_guard_patch.log legacy_equation_source_before.sha256 cmake.log build.log solve_wrapper.log solver_wrapper_rc.txt legacy_kn0010_milestone_comparison.json legacy_kn0010_fresh_120k_verdict.json "$ROOT/" || true
+          cp -a astr/src/*.F90 "$ROOT/source/" || true
+          cp -a case archived_checkpoints milestone_analysis "$ROOT/evidence/" || true
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LEGACY_R13_KN0010_FRESH_120K
+          path: |
+            LEGACY_R13_KN0010_FRESH_120K.zip
+            LEGACY_R13_KN0010_FRESH_120K.zip.sha256
+          retention-days: 14
+          compression-level: 0
+
+      - name: Clean completion gate
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import json
+          d=json.load(open('legacy_kn0010_fresh_120k_verdict.json'))
+          assert d['clean_120k'] is True,d
+          PY
