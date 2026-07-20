@@ -1,0 +1,1 @@
+Trigger four fresh Kn=0.707 diagnostics to separate explicit timestep sensitivity from wall-relaxation stiffness. No pressure clipping, equation change, accommodation change, grid change, or lid endpoint change is allowed.
