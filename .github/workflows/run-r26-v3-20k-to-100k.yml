@@ -45,6 +45,17 @@ jobs:
           path: endpoint_artifact
       - name: Prepare exact continuation state
         run: python3 diagnostics/prepare_r26_continuation.py --source-artifact source_artifact --base-artifact base_seed_artifact --endpoint-artifact endpoint_artifact --output state
+      - name: Patch unsafe optional logical guards and rebuild
+        run: |
+          set -euxo pipefail
+          python3 diagnostics/patch_optional_timerept_guards.py state/astr --report state/optional_timerept_guard_audit.json
+          rm -rf state/astr/build
+          cmake -S state/astr -B state/astr/build \
+            -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=OFF \
+            '-DCMAKE_Fortran_FLAGS=-ffpe-trap=invalid -fbacktrace -g'
+          cmake --build state/astr/build --verbose -j 2
+          test -x state/astr/build/bin/astr
+          grep -RInE 'present\([[:space:]]*timerept[[:space:]]*\)[[:space:]]*\.and\.[[:space:]]*timerept' state/astr/src && exit 2 || true
       - name: Continue to 40k
         run: bash diagnostics/run_r26_segment.sh state 40000
       - name: Upload 40k state
