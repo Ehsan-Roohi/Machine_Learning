@@ -1,0 +1,123 @@
+name: Diagnose Rana R13 Kn 0.707 sensitivity
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/run-rana0707-sensitivity.yml'
+      - 'diagnostics/retune_rana_wall_path.py'
+      - 'run-rana0707-sensitivity-trigger.txt'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  sensitivity:
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - {tag: dt_half, tau: '1.0e-3', ramp: '5.0e-2', dt: '5.0e-7', steps: 20000}
+          - {tag: tau2, tau: '2.0e-3', ramp: '5.0e-2', dt: '5.0e-7', steps: 20000}
+          - {tag: tau5, tau: '5.0e-3', ramp: '5.0e-2', dt: '5.0e-7', steps: 20000}
+          - {tag: tau5_ramp10, tau: '5.0e-3', ramp: '1.0e-1', dt: '5.0e-7', steps: 20000}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gfortran cmake make openmpi-bin libopenmpi-dev libhdf5-openmpi-dev python3-h5py python3-numpy zip
+      - name: Download audited paper-exact R13 source
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_RANA2013_R13_AUDITED_SOURCE
+          run-id: 29673135273
+          github-token: ${{ github.token }}
+          path: audited
+      - name: Apply stabilized wall path and selected sensitivity parameters
+        run: |
+          set -euxo pipefail
+          cp -a audited/astr ./astr
+          rm -rf astr/build
+          python3 diagnostics/patch_r13_time_consistent_wall.py astr --report base_stabilization_audit.json
+          python3 diagnostics/retune_rana_wall_path.py astr \
+            --tau-bc ${{ matrix.tau }} --ramp-time ${{ matrix.ramp }} \
+            --report sensitivity_parameter_audit.json
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build --verbose -j 2
+          grep -F -- '-ffpe-trap=invalid' astr/build/src/CMakeFiles/astr.dir/flags.make
+          test -x astr/build/bin/astr
+      - name: Generate fresh Rana Kn 0.707 case
+        run: |
+          python3 audited/rana2013_r13/make_rana2013_case.py \
+            --template-case audited/template_case --output case \
+            --paper-kn 0.707 --grid-points 75 --maxstep ${{ matrix.steps }} \
+            --dt ${{ matrix.dt }} --checkpoint-every 1000
+      - name: Run sensitivity case from equilibrium
+        id: solve
+        continue-on-error: true
+        env:
+          WALLCLOCK_MINUTES: 320
+          GFORTRAN_ERROR_BACKTRACE: '1'
+        run: bash audited/rana2013_r13/run_rana2013_case.sh "$PWD/case" "$PWD/astr/build/bin/astr" "$PWD/audited/rana2013_r13/rana2013_reference.json"
+      - name: Build scientific verdict
+        if: always()
+        env:
+          SOLVE_OUTCOME: ${{ steps.solve.outcome }}
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,re,os
+          import h5py,numpy as np
+          texts=[]
+          for p in list(Path('case').glob('*.log'))+list(Path('case/logs').glob('*.log')):
+              texts.append(p.read_text(errors='replace'))
+          log='\n'.join(texts)
+          status=json.loads(Path('case/analysis/run_status.json').read_text()) if Path('case/analysis/run_status.json').exists() else {}
+          target=${{ matrix.steps }}
+          actual=int(status.get('last_checkpoint_step') or 0)
+          markers={x:len(re.findall(x,log,re.I)) for x in ['RANA_P_FAILURE','SIGFPE','IEEE_INVALID_FLAG','COMPUTATION CRASHED','NaN','Infinity']}
+          finite=False; positive=False; extrema={}
+          p=Path('case/outdat/flowfield.h5')
+          if p.exists():
+              with h5py.File(p,'r') as h:
+                  finite=True
+                  bad=[]
+                  def visit(n,o):
+                      if isinstance(o,h5py.Dataset) and o.dtype.kind in 'fc' and not np.isfinite(np.asarray(o[...])).all(): bad.append(n)
+                  h.visititems(visit)
+                  finite=not bad
+                  positive=all(float(np.min(h[k][...]))>0 for k in ['ro','p','t'])
+                  for k in ['ro','p','t','u1','u2','qx','qy','Rxx','Rxy','Ryy','Delta']:
+                      a=np.asarray(h[k],float); extrema[k]={'min':float(np.min(a)),'max':float(np.max(a))}
+          verdict={
+              'tag':'${{ matrix.tag }}','kn':0.707,'tau_bc':${{ matrix.tau }},
+              'ramp_time':${{ matrix.ramp }},'requested_dt':${{ matrix.dt }},
+              'target':target,'actual':actual,'solve_outcome':os.environ.get('SOLVE_OUTCOME'),
+              'status':status,'markers':markers,'finite':finite,'positive':positive,
+              'extrema':extrema,
+              'passed':actual==target and status.get('return_code')==0 and finite and positive and all(v==0 for v in markers.values()),
+              'scientific_scope':'sensitivity diagnostic; no equation or pressure floor changed'
+          }
+          Path('sensitivity_verdict.json').write_text(json.dumps(verdict,indent=2)+'\n')
+          print(json.dumps(verdict,indent=2))
+          PY
+      - name: Package sensitivity evidence
+        if: always()
+        run: |
+          ROOT=RANA0707_SENSITIVITY_${{ matrix.tag }}
+          mkdir -p "$ROOT"
+          cp -a case base_stabilization_audit.json sensitivity_parameter_audit.json sensitivity_verdict.json "$ROOT/" || true
+          cp -a astr/src/methodmoment.F90 astr/src/bc.F90 "$ROOT/" || true
+          zip -r -6 "${ROOT}.zip" "$ROOT"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: RANA0707_SENSITIVITY_${{ matrix.tag }}
+          path: RANA0707_SENSITIVITY_${{ matrix.tag }}.zip
+          retention-days: 14
+          compression-level: 0
