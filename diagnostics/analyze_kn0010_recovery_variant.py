@@ -32,10 +32,9 @@ def nrms(a,b): return float(np.sqrt(np.mean((a-b)**2))/max(np.sqrt(np.mean(a*a))
 def global_metrics(sigmaxy,u1,x,y,mach,speed_ratio,gamma=GAMMA):
     """Return Rana's reduced drag D and centerline flow rate G.
 
-    ASTR stores stress on the dynamic-pressure scale.  Rana/Sharipov's
-    low-speed drag coefficient uses sqrt(2)*(sigma_xy/p0)/U*, where
-    U*=U_lid/sqrt(theta0).  The former 1/(sqrt(2)*U*) implementation was
-    exactly a factor of two too small.
+    ASTR stores stress on the dynamic-pressure scale.  Rana's Eq. (30) uses
+    the barred low-speed stress, so sigma_xy/p0 must additionally be divided
+    by sqrt(2)*U*, where U*=U_lid/sqrt(theta0).
     """
     sigmaxy=np.asarray(sigmaxy,dtype=float); u1=np.asarray(u1,dtype=float)
     x=np.asarray(x,dtype=float); y=np.asarray(y,dtype=float)
@@ -57,7 +56,7 @@ def global_metrics(sigmaxy,u1,x,y,mach,speed_ratio,gamma=GAMMA):
     iy_top=int(np.argmax(y))
     raw_integral=float(_trapezoid(sigmaxy[iy_top,:],x))
     sigma_over_p0_signed=const2*raw_integral
-    reduced_factor=np.sqrt(2.0)/speed_ratio
+    reduced_factor=1.0/(np.sqrt(2.0)*speed_ratio)
     reduced_signed=reduced_factor*sigma_over_p0_signed
     umid=np.asarray([np.interp(0.5,x,row) for row in u1])
     G=float(_trapezoid(np.abs(umid),y))

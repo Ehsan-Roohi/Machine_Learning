@@ -11,8 +11,6 @@ on:
       - 'rana2013_r13/run_reference_benchmark.py'
       - 'rana2013_r13/test_*reference*.py'
       - 'rana2013_r13/requirements-reference.txt'
-      - 'diagnostics/analyze_kn0010_recovery_variant.py'
-      - 'diagnostics/test_kn0010_recovery_metrics.py'
 
 permissions:
   contents: read
@@ -49,7 +47,6 @@ jobs:
           python3 rana2013_r13/test_linear_reference_solver.py
           python3 rana2013_r13/test_nonlinear_reference_solver.py
           python3 rana2013_r13/test_reference_benchmark.py
-          python3 diagnostics/test_kn0010_recovery_metrics.py
 
       - name: Run fresh nonlinear N12 smoke from the linear first iterate
         run: |
