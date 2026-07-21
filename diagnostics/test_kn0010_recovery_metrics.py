@@ -21,7 +21,7 @@ def main() -> None:
     u=np.asarray([[X+2.0*Y for X in x] for Y in y])
     got=global_metrics(sigma,u,x,y,mach,speed,gamma)
     expected_sigma_over_p0=-2.0*gamma*mach**2
-    expected_D=expected_sigma_over_p0/(math.sqrt(2.0)*speed)
+    expected_D=math.sqrt(2.0)*expected_sigma_over_p0/speed
     integrate=getattr(np,'trapezoid',np.trapz)
     expected_G=float(integrate(np.abs(0.5+2.0*y),y))
 

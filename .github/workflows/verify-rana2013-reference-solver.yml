@@ -1,0 +1,95 @@
+name: Verify independent Rana 2013 R13 reference solver
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/verify-rana2013-reference-solver.yml'
+      - 'rana2013_r13/discrete_operator_oracle.py'
+      - 'rana2013_r13/linear_reference_solver.py'
+      - 'rana2013_r13/nonlinear_reference_solver.py'
+      - 'rana2013_r13/run_reference_benchmark.py'
+      - 'rana2013_r13/test_*reference*.py'
+      - 'rana2013_r13/requirements-reference.txt'
+      - 'diagnostics/analyze_kn0010_recovery_variant.py'
+      - 'diagnostics/test_kn0010_recovery_metrics.py'
+
+permissions:
+  contents: read
+
+jobs:
+  static-and-nonlinear-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned numerical runtime
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r rana2013_r13/requirements-reference.txt
+
+      - name: Preserve existing paper-production holds
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          text=Path('.github/workflows/run-rana2013-r13-benchmark.yml').read_text()
+          core=text[text.index('  paper-core:'):text.index('  paper-grid-study:')]
+          grid=text[text.index('  paper-grid-study:'):]
+          hold='if: $'+'{{ false }}'
+          assert hold in core, 'paper-core hard hold changed'
+          assert hold in grid, 'paper-grid-study hard hold changed'
+          print('PAPER_HARD_HOLDS_PRESERVED')
+          PY
+
+      - name: Run equation, wall, Jacobian, metric, and driver tests
+        run: |
+          set -euxo pipefail
+          python3 rana2013_r13/test_discrete_operator_oracle.py
+          python3 rana2013_r13/test_linear_reference_solver.py
+          python3 rana2013_r13/test_nonlinear_reference_solver.py
+          python3 rana2013_r13/test_reference_benchmark.py
+          python3 diagnostics/test_kn0010_recovery_metrics.py
+
+      - name: Run fresh nonlinear N12 smoke from the linear first iterate
+        run: |
+          python3 rana2013_r13/run_reference_benchmark.py \
+            --nx 12 --ny 12 --kn 0.01 --lid-velocity 0.05 \
+            --direct-linear --nonlinear \
+            --output-dir reference-smoke
+
+      - name: Verify operational gates explicitly
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report=json.loads(Path('reference-smoke/benchmark_report.json').read_text())
+          assert report['passed'] is True,report
+          assert report['publication_grade'] is False,report
+          assert all(report['gates'][name] for name in report['required_gates']),report
+          print('REFERENCE_SMOKE_GATES_PASS')
+          PY
+
+      - name: Upload reproducible smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: RANA2013_REFERENCE_SOLVER_SMOKE
+          path: reference-smoke/
+          retention-days: 14
+
+  # These jobs intentionally remain disabled.  The N=75 run is enabled only
+  # after the smoke artifact and independent metric audit are reviewed.
+  paper-core:
+    if: ${{ false }}
+    needs: static-and-nonlinear-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'hard hold'
+
+  paper-grid-study:
+    if: ${{ false }}
+    needs: paper-core
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'hard hold'
