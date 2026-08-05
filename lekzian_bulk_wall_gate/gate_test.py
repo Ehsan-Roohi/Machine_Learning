@@ -2,9 +2,10 @@
 """Matched-capacity gate test for the Lekzian--Roohi bulk-to-wall study.
 
 The script consumes the *full annular descriptor* table produced from the 27
-Phase-1 DSMC cases.  Every candidate receives the same input width and the
-same neural architecture.  Unobserved annuli are replaced by training-set
-medians (zero after standardisation) and explicit annulus masks are appended.
+Phase-1 DSMC cases.  Every candidate receives the exact engineered case/surface
+features and branch/trunk/gated-decoder architecture of the strong direct-wall
+surrogate, plus the same fixed-width bulk trunk. Unobserved annuli are replaced
+by training-set medians (zero after standardisation) and explicit masks.
 
 Models/configurations
 ---------------------
@@ -43,16 +44,18 @@ import pandas as pd
 try:
     import torch
     import torch.nn as nn
+    import torch.nn.functional as F
     from torch.utils.data import DataLoader, TensorDataset
 except ModuleNotFoundError:  # Schema/decision tests can run without the GPU stack.
     torch = None
     nn = None
+    F = None
     DataLoader = None
     TensorDataset = None
 
 
 TARGETS = ("Cp", "Cq", "tau_abs")
-ID_COLUMNS = {"case_id", "surface_i", "geom", "config"}
+ID_COLUMNS = {"case_id", "surface_i", "geom", "config", "gate_sample_weight"}
 RING_RE = re.compile(r"^(ring_([^_]+)_([^_]+))_")
 
 
@@ -131,7 +134,8 @@ def range_mae_pct(pred: np.ndarray, true: np.ndarray, eps: float = 1e-12) -> flo
 
 @dataclass(frozen=True)
 class FeatureSchema:
-    base_columns: Tuple[str, ...]
+    case_columns: Tuple[str, ...]
+    surface_columns: Tuple[str, ...]
     bulk_columns: Tuple[str, ...]
     ring_names: Tuple[str, ...]
     ring_lower: Tuple[float, ...]
@@ -140,7 +144,24 @@ class FeatureSchema:
 
     @property
     def input_dimension(self) -> int:
-        return len(self.base_columns) + len(self.bulk_columns) + len(self.ring_names)
+        return (
+            len(self.case_columns)
+            + len(self.surface_columns)
+            + len(self.bulk_columns)
+            + len(self.ring_names)
+        )
+
+    @property
+    def case_dimension(self) -> int:
+        return len(self.case_columns)
+
+    @property
+    def trunk_dimension(self) -> int:
+        return len(self.surface_columns) + len(self.bulk_columns) + len(self.ring_names)
+
+    @property
+    def base_columns(self) -> Tuple[str, ...]:
+        return self.case_columns + self.surface_columns
 
 
 def infer_schema(df: pd.DataFrame) -> FeatureSchema:
@@ -157,7 +178,7 @@ def infer_schema(df: pd.DataFrame) -> FeatureSchema:
     if not ring_to_cols:
         raise ValueError(
             "No full-ring descriptors found. Expected columns such as "
-            "ring_0p0_0p1_u_mean. Use surface_patch_dataset_full.csv."
+            "ring_0p0_0p1_u_mean. Use surface_patch_dataset_full_gate.csv."
         )
 
     rings = sorted(ring_to_cols, key=lambda x: ring_bounds[x][0])
@@ -168,17 +189,17 @@ def infer_schema(df: pd.DataFrame) -> FeatureSchema:
             bulk_columns.append(col)
             bulk_ring_index.append(ring_i)
 
-    excluded = ID_COLUMNS | set(TARGETS) | set(bulk_columns)
-    base_columns = [
-        str(c)
-        for c in df.columns
-        if c not in excluded and pd.api.types.is_numeric_dtype(df[c])
-    ]
-    if not base_columns:
-        raise ValueError("No numeric parameter/geometry/surface columns were found.")
+    case_columns = tuple(str(c) for c in df.columns if str(c).startswith("operator_case_f"))
+    surface_columns = tuple(str(c) for c in df.columns if str(c).startswith("operator_surface_f"))
+    if len(case_columns) < 7 or not surface_columns:
+        raise ValueError(
+            "The feature table lacks the exact case/surface representation of the strong direct-wall operator. "
+            "Rebuild it with prepare_gate_features.py; a legacy full-ring table is not sufficient for this Gate Test."
+        )
 
     return FeatureSchema(
-        base_columns=tuple(base_columns),
+        case_columns=case_columns,
+        surface_columns=surface_columns,
         bulk_columns=tuple(bulk_columns),
         ring_names=tuple(rings),
         ring_lower=tuple(ring_bounds[r][0] for r in rings),
@@ -188,7 +209,7 @@ def infer_schema(df: pd.DataFrame) -> FeatureSchema:
 
 
 def validate_table(df: pd.DataFrame, schema: FeatureSchema) -> None:
-    missing = set(TARGETS) | {"case_id", "Ma", "Kn"}
+    missing = set(TARGETS) | {"case_id", "Ma", "Kn", "gate_sample_weight"}
     missing -= set(df.columns)
     if missing:
         raise ValueError(f"Feature table is missing columns: {sorted(missing)}")
@@ -303,28 +324,72 @@ def transform_features(
 
 
 if nn is not None:
-    class FixedCapacityMLP(nn.Module):
-        def __init__(self, input_dim: int, hidden: int, depth: int, dropout: float):
+    class MLP(nn.Module):
+        def __init__(self, in_dim: int, out_dim: int, hidden: int, depth: int, dropout: float):
             super().__init__()
             layers: List[nn.Module] = []
-            width_in = input_dim
+            width_in = in_dim
             for _ in range(depth):
-                layers.extend(
-                    [
-                        nn.Linear(width_in, hidden),
-                        nn.LayerNorm(hidden),
-                        nn.SiLU(),
-                        nn.Dropout(dropout),
-                    ]
-                )
+                layers.extend([nn.Linear(width_in, hidden), nn.SiLU()])
+                if dropout > 0:
+                    layers.append(nn.Dropout(dropout))
                 width_in = hidden
-            layers.append(nn.Linear(width_in, len(TARGETS)))
+            layers.append(nn.Linear(width_in, out_dim))
             self.net = nn.Sequential(*layers)
 
         def forward(self, x: "torch.Tensor") -> "torch.Tensor":
             return self.net(x)
+
+
+    class FixedCapacitySurfaceOperator(nn.Module):
+        """The strong surface-only operator with a fixed-width bulk-aware trunk."""
+
+        def __init__(
+            self,
+            case_dim: int,
+            trunk_dim: int,
+            latent: int,
+            hidden: int,
+            depth: int,
+            dropout: float,
+            full_residual_scale: float,
+        ):
+            super().__init__()
+            if case_dim < 7:
+                raise ValueError("The direct-wall operator requires at least seven ordered case features.")
+            self.case_dim = int(case_dim)
+            self.full_residual_scale = float(full_residual_scale)
+            self.base_branch = MLP(5, latent, hidden, depth, dropout)
+            self.h_branch = MLP(4, latent, hidden, depth, dropout)
+            self.tw_branch = MLP(4, latent, hidden, depth, dropout)
+            self.full_branch = MLP(case_dim, latent, hidden, max(1, depth - 1), dropout)
+            self.trunk = MLP(trunk_dim, latent, hidden, depth, dropout)
+            self.wind_decoder = MLP(latent, len(TARGETS), hidden, depth, dropout)
+            self.lee_decoder = MLP(latent, len(TARGETS), hidden, depth, dropout)
+            self.gate = MLP(trunk_dim, 1, max(32, hidden // 2), 2, 0.0)
+
+        def branch_embedding(self, case_x: "torch.Tensor") -> "torch.Tensor":
+            ma_log_geom = torch.cat([case_x[:, 0:2], case_x[:, 4:7]], dim=1)
+            log_geom = torch.cat([case_x[:, 1:2], case_x[:, 4:7]], dim=1)
+            h_delta = case_x[:, 2:3]
+            tw_delta = case_x[:, 3:4]
+            z = self.base_branch(ma_log_geom)
+            z = z + h_delta * self.h_branch(log_geom)
+            z = z + tw_delta * self.tw_branch(log_geom)
+            if self.full_residual_scale > 0:
+                z = z + self.full_residual_scale * self.full_branch(case_x)
+            return z
+
+        def forward(self, x: "torch.Tensor") -> "torch.Tensor":
+            case_x = x[:, : self.case_dim]
+            trunk_x = x[:, self.case_dim :]
+            z = self.branch_embedding(case_x) * self.trunk(trunk_x)
+            wind = self.wind_decoder(z)
+            lee = self.lee_decoder(z)
+            gate = torch.sigmoid(self.gate(trunk_x))
+            return gate * wind + (1.0 - gate) * lee
 else:
-    class FixedCapacityMLP:  # pragma: no cover - only used for a clear runtime error.
+    class FixedCapacitySurfaceOperator:  # pragma: no cover - clear runtime error only.
         def __init__(self, *args, **kwargs):
             raise RuntimeError("PyTorch is required to train the matched-capacity Gate Test.")
 
@@ -340,15 +405,21 @@ def _resolve_device(name: str) -> torch.device:
 def train_predict(
     x_train: np.ndarray,
     y_train: np.ndarray,
+    w_train: np.ndarray,
     x_val: np.ndarray,
     y_val: np.ndarray,
+    w_val: np.ndarray,
     x_test: np.ndarray,
     *,
     seed: int,
     device: torch.device,
+    case_dim: int,
+    trunk_dim: int,
+    latent: int,
     hidden: int,
     depth: int,
     dropout: float,
+    full_residual_scale: float,
     epochs: int,
     batch_size: int,
     lr: float,
@@ -356,15 +427,22 @@ def train_predict(
     patience: int,
 ) -> Tuple[np.ndarray, int, float, int]:
     _seed_everything(seed)
-    model = FixedCapacityMLP(x_train.shape[1], hidden, depth, dropout).to(device)
+    model = FixedCapacitySurfaceOperator(
+        case_dim=case_dim,
+        trunk_dim=trunk_dim,
+        latent=latent,
+        hidden=hidden,
+        depth=depth,
+        dropout=dropout,
+        full_residual_scale=full_residual_scale,
+    ).to(device)
     parameter_count = sum(p.numel() for p in model.parameters())
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-    loss_fn = nn.HuberLoss(delta=1.0)
 
     generator = torch.Generator()
     generator.manual_seed(seed)
     loader = DataLoader(
-        TensorDataset(torch.from_numpy(x_train), torch.from_numpy(y_train)),
+        TensorDataset(torch.from_numpy(x_train), torch.from_numpy(y_train), torch.from_numpy(w_train)),
         batch_size=min(batch_size, len(x_train)),
         shuffle=True,
         generator=generator,
@@ -372,6 +450,7 @@ def train_predict(
     )
     xv = torch.from_numpy(x_val).to(device)
     yv = torch.from_numpy(y_val).to(device)
+    wv = torch.from_numpy(w_val).to(device)
 
     best_loss = math.inf
     best_epoch = 0
@@ -379,18 +458,21 @@ def train_predict(
     stale = 0
     for epoch in range(1, epochs + 1):
         model.train()
-        for xb, yb in loader:
+        for xb, yb, wb in loader:
             xb = xb.to(device, non_blocking=True)
             yb = yb.to(device, non_blocking=True)
+            wb = wb.to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
-            loss = loss_fn(model(xb), yb)
+            element = F.huber_loss(model(xb), yb, delta=1.0, reduction="none").mean(dim=1, keepdim=True)
+            loss = (element * wb).mean()
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
         model.eval()
         with torch.no_grad():
-            value = float(loss_fn(model(xv), yv).cpu())
+            element = F.huber_loss(model(xv), yv, delta=1.0, reduction="none").mean(dim=1, keepdim=True)
+            value = float((element * wv).mean().cpu())
         if value < best_loss - 1e-6:
             best_loss = value
             best_epoch = epoch
@@ -450,9 +532,20 @@ def run_experiment(df: pd.DataFrame, schema: FeatureSchema, args: argparse.Names
     print(f"[INFO] device={device}; fixed input dimension={schema.input_dimension}", flush=True)
     print(f"[INFO] configs={configs}", flush=True)
 
-    for scheme in args.cv_list:
+    schemes = args.cv_list
+    if args.only_scheme:
+        if args.only_scheme not in schemes:
+            raise ValueError(f"--only-scheme={args.only_scheme} is not present in --cv")
+        schemes = [args.only_scheme]
+    for scheme in schemes:
         groups = _outer_groups(df, scheme)
         outer_values = sorted(groups.unique())
+        if args.only_outer_group:
+            if args.only_outer_group not in outer_values:
+                raise ValueError(
+                    f"Outer group {args.only_outer_group!r} not found for {scheme}; available={outer_values}"
+                )
+            outer_values = [args.only_outer_group]
         if args.limit_folds > 0:
             outer_values = outer_values[: args.limit_folds]
         for fold_i, outer_group in enumerate(outer_values, 1):
@@ -468,6 +561,8 @@ def run_experiment(df: pd.DataFrame, schema: FeatureSchema, args: argparse.Names
                 prep = fit_preprocessor(train_df, schema)
                 ytr = ((train_df[list(TARGETS)].to_numpy(float) - prep.y_mean) / prep.y_std).astype(np.float32)
                 yva = ((val_df[list(TARGETS)].to_numpy(float) - prep.y_mean) / prep.y_std).astype(np.float32)
+                wtr = train_df["gate_sample_weight"].to_numpy(np.float32).reshape(-1, 1)
+                wva = val_df["gate_sample_weight"].to_numpy(np.float32).reshape(-1, 1)
 
                 for config in configs:
                     task = _task_key(scheme, str(outer_group), seed, config)
@@ -488,14 +583,20 @@ def run_experiment(df: pd.DataFrame, schema: FeatureSchema, args: argparse.Names
                     pred_z, best_epoch, best_loss, n_parameters = train_predict(
                         xtr,
                         ytr,
+                        wtr,
                         xva,
                         yva,
+                        wva,
                         xte,
                         seed=model_seed,
                         device=device,
+                        case_dim=schema.case_dimension,
+                        trunk_dim=schema.trunk_dimension,
+                        latent=args.latent,
                         hidden=args.hidden,
                         depth=args.depth,
                         dropout=args.dropout,
+                        full_residual_scale=args.full_residual_scale,
                         epochs=args.epochs,
                         batch_size=args.batch_size,
                         lr=args.lr,
@@ -555,6 +656,29 @@ def run_experiment(df: pd.DataFrame, schema: FeatureSchema, args: argparse.Names
     metrics.to_csv(out_dir / "case_metrics.csv", index=False)
     if partial_predictions.exists():
         pd.read_csv(partial_predictions).to_csv(out_dir / "surface_predictions.csv", index=False)
+    return metrics
+
+
+def aggregate_task_results(task_root: Path, out_dir: Path, save_predictions: bool) -> pd.DataFrame:
+    metric_paths = sorted(task_root.glob("task_*/case_metrics.csv"))
+    if not metric_paths:
+        raise RuntimeError(f"No completed task metrics found under {task_root}")
+    metrics = pd.concat([pd.read_csv(path) for path in metric_paths], ignore_index=True)
+    task_cols = ["scheme", "outer_group", "seed", "config", "case_id", "target"]
+    duplicate_count = int(metrics.duplicated(task_cols).sum())
+    if duplicate_count:
+        raise RuntimeError(f"Aggregation found {duplicate_count} duplicate case-metric rows.")
+    counts = metrics.groupby(["scheme", "outer_group", "seed"])["config"].nunique()
+    if counts.nunique() != 1 or int(counts.iloc[0]) < 3:
+        raise RuntimeError("At least one array task has an incomplete configuration set.")
+    metrics.to_csv(out_dir / "case_metrics.csv", index=False)
+
+    if save_predictions:
+        prediction_paths = sorted(task_root.glob("task_*/surface_predictions.csv"))
+        if len(prediction_paths) != len(metric_paths):
+            raise RuntimeError("Some array tasks are missing surface_predictions.csv.")
+        predictions = pd.concat([pd.read_csv(path) for path in prediction_paths], ignore_index=True)
+        predictions.to_csv(out_dir / "surface_predictions.csv", index=False)
     return metrics
 
 
@@ -812,14 +936,16 @@ def plot_summary(summary: pd.DataFrame, out_dir: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--feature-table", required=True, help="surface_patch_dataset_full.csv")
+    parser.add_argument("--feature-table", required=True, help="surface_patch_dataset_full_gate.csv")
     parser.add_argument("--out", required=True)
     parser.add_argument("--radii", default="0.1,0.25,0.5,1.0,2.0")
     parser.add_argument("--cv", default="loco,pairout", help="loco,pairout")
     parser.add_argument("--seeds", default="101,202,303,404,505")
     parser.add_argument("--hidden", type=int, default=192)
+    parser.add_argument("--latent", type=int, default=128)
     parser.add_argument("--depth", type=int, default=3)
     parser.add_argument("--dropout", type=float, default=0.03)
+    parser.add_argument("--full-residual-scale", type=float, default=0.05)
     parser.add_argument("--epochs", type=int, default=350)
     parser.add_argument("--patience", type=int, default=45)
     parser.add_argument("--batch-size", type=int, default=512)
@@ -831,6 +957,10 @@ def main() -> None:
     parser.add_argument("--min-gain-pp", type=float, default=2.0)
     parser.add_argument("--delta-full-pp", type=float, default=2.0)
     parser.add_argument("--limit-folds", type=int, default=0, help="Testing only; 0 uses every outer fold.")
+    parser.add_argument("--only-scheme", choices=["loco", "pairout"])
+    parser.add_argument("--only-outer-group")
+    parser.add_argument("--skip-summary", action="store_true", help="Array worker mode.")
+    parser.add_argument("--aggregate-task-root", help="Aggregate completed task_* directories instead of training.")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--no-surface-predictions", action="store_true")
     args = parser.parse_args()
@@ -858,13 +988,19 @@ def main() -> None:
         "cv": args.cv_list,
         "seeds": args.seeds_list,
         "hidden": args.hidden,
+        "latent": args.latent,
         "depth": args.depth,
         "dropout": args.dropout,
+        "full_residual_scale": args.full_residual_scale,
         "epochs": args.epochs,
         "patience": args.patience,
         "batch_size": args.batch_size,
         "lr": args.lr,
         "weight_decay": args.weight_decay,
+        "only_scheme": args.only_scheme,
+        "only_outer_group": args.only_outer_group,
+        "skip_summary": args.skip_summary,
+        "aggregate_task_root": args.aggregate_task_root,
     }
     signature = hashlib.sha256(json.dumps(signature_payload, sort_keys=True).encode("utf-8")).hexdigest()
     signature_path = out_dir / "run_signature.json"
@@ -902,7 +1038,15 @@ def main() -> None:
     )
     (out_dir / "run_config.json").write_text(json.dumps(config_record, indent=2), encoding="utf-8")
 
-    metrics = run_experiment(df, schema, args)
+    if args.aggregate_task_root:
+        metrics = aggregate_task_results(
+            Path(args.aggregate_task_root).expanduser().resolve(), out_dir, not args.no_surface_predictions
+        )
+    else:
+        metrics = run_experiment(df, schema, args)
+    if args.skip_summary:
+        print(f"[DONE] array worker outputs under {out_dir}", flush=True)
+        return
     summary, gains = summarise_metrics(metrics, args, out_dir)
     adequacy = compute_adequacy(summary, args, out_dir)
     decision = make_decision(summary, gains, adequacy, args, out_dir)
