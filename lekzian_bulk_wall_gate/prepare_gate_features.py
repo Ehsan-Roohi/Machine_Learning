@@ -5,6 +5,8 @@ This deliberately reuses the original field reader, surface reader, geometry
 logic, and descriptor extractor.  It extracts only the six-block ``full``
 representation needed by ``gate_test.py``; finite-radius inputs are generated
 later by masking outer annuli, so every candidate has identical dimensionality.
+The exact case features, surface features, and peak/apex weights used by the
+strong direct-wall operator are embedded in the same table.
 """
 
 from __future__ import annotations
@@ -28,6 +30,23 @@ def import_module(path: Path, name: str):
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def direct_wall_weights(surface_base, surface: pd.DataFrame, targets: np.ndarray) -> np.ndarray:
+    settings = SimpleNamespace(
+        surface_apex_weight=2.0,
+        surface_peak_weight=2.0,
+        surface_peak_sigma=0.06,
+        surface_weight_clip=12.0,
+    )
+    weights = surface_base.compute_surface_weights(surface, targets, settings).reshape(-1)
+    s01 = surface["s01"].to_numpy(float)
+    for j in range(targets.shape[1]):
+        values = targets[:, j]
+        if np.isfinite(values).any():
+            peak_s = s01[int(np.nanargmax(np.abs(values)))]
+            weights += 2.0 * np.exp(-0.5 * ((s01 - peak_s) / 0.06) ** 2)
+    return np.clip(weights, 1.0, 12.0).astype(np.float32)
 
 
 def main() -> None:
@@ -62,6 +81,18 @@ def main() -> None:
         if case is None:
             continue
         table = nonlocal_base.make_features_for_case(case, [("full", None)])["full"]
+        geom = surface_base.geometry_from_row(row)
+        case_features = np.asarray(surface_base.case_features(row), dtype=float).reshape(-1)
+        surface_features = np.asarray(
+            surface_base.build_surface_point_features(case.surface, row=row, geom=geom), dtype=float
+        )
+        if surface_features.shape[0] != len(table):
+            raise RuntimeError(f"Surface-feature alignment failed for {case.case_id}")
+        for j, value in enumerate(case_features):
+            table[f"operator_case_f{j:03d}"] = float(value)
+        for j in range(surface_features.shape[1]):
+            table[f"operator_surface_f{j:03d}"] = surface_features[:, j]
+        table["gate_sample_weight"] = direct_wall_weights(surface_base, case.surface, case.targets)
         tables.append(table)
         case_rows.append(
             {
@@ -82,7 +113,7 @@ def main() -> None:
     if not tables:
         raise RuntimeError("No feature tables were produced.")
     full = pd.concat(tables, ignore_index=True)
-    feature_path = out_dir / "surface_patch_dataset_full.csv"
+    feature_path = out_dir / "surface_patch_dataset_full_gate.csv"
     full.to_csv(feature_path, index=False)
     pd.DataFrame(case_rows).to_csv(out_dir / "case_table_phase1.csv", index=False)
     record = vars(args).copy()
