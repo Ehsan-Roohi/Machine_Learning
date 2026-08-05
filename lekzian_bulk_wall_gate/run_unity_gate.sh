@@ -4,6 +4,7 @@ set -euo pipefail
 # Unity defaults already established for the Roohi account.  Every path can be
 # overridden as an environment variable before invoking this launcher.
 UNITY_ROOT="${UNITY_ROOT:-/project/pi_roohie_umass_edu/Combustion}"
+LEGACY_ROOT="${LEGACY_ROOT:-/project/pi_roohie_umass_edu/Sabouri}"
 PYTHON_BIN="${PYTHON_BIN:-/work/pi_roohie_umass_edu/roohie_umass_edu/.conda/envs/dsmc-gpu/bin/python}"
 WORK_DIR="${WORK_DIR:-${UNITY_ROOT}/LEKZIAN_BULK_WALL_GATE}"
 REPO_URL="${REPO_URL:-https://github.com/Ehsan-Roohi/Machine_Learning.git}"
@@ -42,11 +43,14 @@ find_first() {
   find "${root}" -type f \( "$@" \) -print -quit 2>/dev/null || true
 }
 
-# Prefer an explicitly supplied/precomputed Gate table.  This avoids
-# repeating the expensive DSMC descriptor extraction.
+# Prefer an explicitly supplied/precomputed Gate table. Otherwise use the
+# known Sabouri project tree and fall back to a constrained project-wide search.
 FEATURE_TABLE="${FEATURE_TABLE:-}"
 if [[ -z "${FEATURE_TABLE}" ]]; then
-  FEATURE_TABLE="$(find_first "${UNITY_ROOT}" -name surface_patch_dataset_full_gate.csv)"
+  FEATURE_TABLE="$(find_first "${WORK_DIR}" -name surface_patch_dataset_full_gate.csv)"
+fi
+if [[ -z "${FEATURE_TABLE}" && -d "${LEGACY_ROOT}" ]]; then
+  FEATURE_TABLE="$(find_first "${LEGACY_ROOT}" -name surface_patch_dataset_full_gate.csv)"
 fi
 
 AUDIT_DIR="${AUDIT_DIR:-}"
@@ -55,31 +59,43 @@ FIELD_BASE_SCRIPT="${FIELD_BASE_SCRIPT:-}"
 SURFACE_BASE_SCRIPT="${SURFACE_BASE_SCRIPT:-}"
 
 if [[ -z "${FEATURE_TABLE}" ]]; then
+  [[ -z "${AUDIT_DIR}" && -d "${LEGACY_ROOT}/protrusion_01_audit_v2" ]] &&
+    AUDIT_DIR="${LEGACY_ROOT}/protrusion_01_audit_v2"
+  [[ -z "${NONLOCAL_SCRIPT}" && -f "${LEGACY_ROOT}/16_protrusion_nonlocal_bulk_to_wall_footprint.py" ]] &&
+    NONLOCAL_SCRIPT="${LEGACY_ROOT}/16_protrusion_nonlocal_bulk_to_wall_footprint.py"
+  [[ -z "${FIELD_BASE_SCRIPT}" && -f "${LEGACY_ROOT}/10_protrusion_train_smooth_field_operator_v4_geomfix.py" ]] &&
+    FIELD_BASE_SCRIPT="${LEGACY_ROOT}/10_protrusion_train_smooth_field_operator_v4_geomfix.py"
+  [[ -z "${SURFACE_BASE_SCRIPT}" && -f "${LEGACY_ROOT}/06_protrusion_train_unified_operator_v8_geomfix.py" ]] &&
+    SURFACE_BASE_SCRIPT="${LEGACY_ROOT}/06_protrusion_train_unified_operator_v8_geomfix.py"
+
   if [[ -z "${AUDIT_DIR}" ]]; then
-    manifest="$(find_first "${UNITY_ROOT}" -name manifest_raw.csv)"
+    manifest="$(find_first "/project/pi_roohie_umass_edu" -path '*/protrusion_01_audit_v2/manifest_raw.csv')"
     [[ -n "${manifest}" ]] && AUDIT_DIR="$(dirname "${manifest}")"
   fi
-  if [[ -z "${NONLOCAL_SCRIPT}" ]]; then
-    NONLOCAL_SCRIPT="$(find_first "${UNITY_ROOT}" -name 16_protrusion_nonlocal_bulk_to_wall_footprint.py)"
-  fi
-  if [[ -z "${FIELD_BASE_SCRIPT}" ]]; then
-    FIELD_BASE_SCRIPT="$(find_first "${UNITY_ROOT}" -name '10_protrusion_train_smooth_field_operator_v4_geomfix.py' -o -name '10_protrusion_train_smooth_field_operator*.py')"
-  fi
-  if [[ -z "${SURFACE_BASE_SCRIPT}" ]]; then
-    SURFACE_BASE_SCRIPT="$(find_first "${UNITY_ROOT}" -name '06_protrusion_train_unified_operator_v8_geomfix.py' -o -name '06_protrusion_train_unified_operator_v7*.py' -o -name '06_protrusion_train_unified_operator*.py')"
-  fi
+  [[ -z "${NONLOCAL_SCRIPT}" ]] &&
+    NONLOCAL_SCRIPT="$(find_first "/project/pi_roohie_umass_edu" -name 16_protrusion_nonlocal_bulk_to_wall_footprint.py)"
+  [[ -z "${FIELD_BASE_SCRIPT}" ]] &&
+    FIELD_BASE_SCRIPT="$(find_first "/project/pi_roohie_umass_edu" -name '10_protrusion_train_smooth_field_operator_v4_geomfix.py' -o -name '10_protrusion_train_smooth_field_operator*.py')"
+  [[ -z "${SURFACE_BASE_SCRIPT}" ]] &&
+    SURFACE_BASE_SCRIPT="$(find_first "/project/pi_roohie_umass_edu" -name '06_protrusion_train_unified_operator_v8_geomfix.py' -o -name '06_protrusion_train_unified_operator_v7*.py' -o -name '06_protrusion_train_unified_operator*.py')"
   FEATURE_TABLE="${FEATURE_DIR}/surface_patch_dataset_full_gate.csv"
 fi
 
 echo "Resolved Lekzian Gate Test paths"
-echo "  Unity root       : ${UNITY_ROOT}"
+echo "  Work root        : ${UNITY_ROOT}"
+echo "  Legacy root      : ${LEGACY_ROOT}"
 echo "  Python           : ${PYTHON_BIN}"
 echo "  Code             : ${GATE_DIR}"
 echo "  Feature table    : ${FEATURE_TABLE}"
-echo "  Audit directory  : ${AUDIT_DIR:-not needed (precomputed table found)}"
-echo "  Nonlocal script  : ${NONLOCAL_SCRIPT:-not needed}"
-echo "  Field base       : ${FIELD_BASE_SCRIPT:-not needed}"
-echo "  Surface base     : ${SURFACE_BASE_SCRIPT:-not needed}"
+if [[ -f "${FEATURE_TABLE}" ]]; then
+  echo "  Input mode       : precomputed Gate table"
+else
+  echo "  Input mode       : rebuild from legacy DSMC audit"
+  echo "  Audit directory  : ${AUDIT_DIR:-MISSING}"
+  echo "  Nonlocal script  : ${NONLOCAL_SCRIPT:-MISSING}"
+  echo "  Field base       : ${FIELD_BASE_SCRIPT:-MISSING}"
+  echo "  Surface base     : ${SURFACE_BASE_SCRIPT:-MISSING}"
+fi
 echo "  Results          : ${RESULT_DIR}"
 echo "  Parallel GPUs    : ${ARRAY_MAX_PARALLEL}"
 echo
@@ -88,13 +104,23 @@ echo "neural capacity; 27-fold case-out and 9-fold (Ma,Kn)-pair-out CV; five see
 echo "and physical-case bootstrap uncertainty."
 
 if [[ ! -f "${FEATURE_TABLE}" ]]; then
-  for required in "${AUDIT_DIR}" "${NONLOCAL_SCRIPT}" "${FIELD_BASE_SCRIPT}" "${SURFACE_BASE_SCRIPT}"; do
-    if [[ -z "${required}" || ! -e "${required}" ]]; then
-      echo "ERROR: feature table is absent and a legacy extraction path could not be resolved." >&2
-      echo "Set FEATURE_TABLE, or set AUDIT_DIR/NONLOCAL_SCRIPT/FIELD_BASE_SCRIPT/SURFACE_BASE_SCRIPT." >&2
-      exit 2
-    fi
-  done
+  missing=()
+  [[ -n "${AUDIT_DIR}" && -f "${AUDIT_DIR}/manifest_raw.csv" ]] ||
+    missing+=("audit manifest: ${AUDIT_DIR:-MISSING}/manifest_raw.csv")
+  [[ -n "${AUDIT_DIR}" && -f "${AUDIT_DIR}/geometry_diagnostics.csv" ]] ||
+    missing+=("geometry diagnostics: ${AUDIT_DIR:-MISSING}/geometry_diagnostics.csv")
+  [[ -n "${NONLOCAL_SCRIPT}" && -f "${NONLOCAL_SCRIPT}" ]] ||
+    missing+=("nonlocal descriptor script 16")
+  [[ -n "${FIELD_BASE_SCRIPT}" && -f "${FIELD_BASE_SCRIPT}" ]] ||
+    missing+=("field reader script 10")
+  [[ -n "${SURFACE_BASE_SCRIPT}" && -f "${SURFACE_BASE_SCRIPT}" ]] ||
+    missing+=("surface/operator script 06")
+  if (( ${#missing[@]} > 0 )); then
+    echo "ERROR: cannot build the Gate feature table. Missing inputs:" >&2
+    printf '  - %s\n' "${missing[@]}" >&2
+    echo "Expected legacy root: ${LEGACY_ROOT}" >&2
+    exit 2
+  fi
 fi
 
 TASK_FILE="${WORK_DIR}/gate_array_tasks.txt"
@@ -229,3 +255,4 @@ else
   echo "ERROR: this launcher requires Slurm/sbatch on Unity." >&2
   exit 2
 fi
+
