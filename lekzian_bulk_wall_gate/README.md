@@ -54,7 +54,8 @@ bash <(curl -fsSL "https://raw.githubusercontent.com/Ehsan-Roohi/Machine_Learnin
 
 Established defaults:
 
-- project root: `/project/pi_roohie_umass_edu/Combustion`
+- working/output root: `/project/pi_roohie_umass_edu/Combustion`
+- legacy DSMC/audit root: `/project/pi_roohie_umass_edu/Sabouri`
 - Python: `/work/pi_roohie_umass_edu/roohie_umass_edu/.conda/envs/dsmc-gpu/bin/python`
 - working directory: `/project/pi_roohie_umass_edu/Combustion/LEKZIAN_BULK_WALL_GATE`
 
