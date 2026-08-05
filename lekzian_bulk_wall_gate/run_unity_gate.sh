@@ -12,6 +12,7 @@ CODE_DIR="${WORK_DIR}/Machine_Learning"
 RESULT_DIR="${RESULT_DIR:-${WORK_DIR}/results}"
 FEATURE_DIR="${FEATURE_DIR:-${WORK_DIR}/features}"
 LOG_DIR="${WORK_DIR}/logs"
+ARRAY_MAX_PARALLEL="${ARRAY_MAX_PARALLEL:-4}"
 
 mkdir -p "${WORK_DIR}" "${RESULT_DIR}" "${FEATURE_DIR}" "${LOG_DIR}"
 
@@ -41,11 +42,11 @@ find_first() {
   find "${root}" -type f \( "$@" \) -print -quit 2>/dev/null || true
 }
 
-# Prefer an explicitly supplied/precomputed full-ring table.  This avoids
+# Prefer an explicitly supplied/precomputed Gate table.  This avoids
 # repeating the expensive DSMC descriptor extraction.
 FEATURE_TABLE="${FEATURE_TABLE:-}"
 if [[ -z "${FEATURE_TABLE}" ]]; then
-  FEATURE_TABLE="$(find_first "${UNITY_ROOT}" -name surface_patch_dataset_full.csv)"
+  FEATURE_TABLE="$(find_first "${UNITY_ROOT}" -name surface_patch_dataset_full_gate.csv)"
 fi
 
 AUDIT_DIR="${AUDIT_DIR:-}"
@@ -67,7 +68,7 @@ if [[ -z "${FEATURE_TABLE}" ]]; then
   if [[ -z "${SURFACE_BASE_SCRIPT}" ]]; then
     SURFACE_BASE_SCRIPT="$(find_first "${UNITY_ROOT}" -name '06_protrusion_train_unified_operator_v8_geomfix.py' -o -name '06_protrusion_train_unified_operator_v7*.py' -o -name '06_protrusion_train_unified_operator*.py')"
   fi
-  FEATURE_TABLE="${FEATURE_DIR}/surface_patch_dataset_full.csv"
+  FEATURE_TABLE="${FEATURE_DIR}/surface_patch_dataset_full_gate.csv"
 fi
 
 echo "Resolved Lekzian Gate Test paths"
@@ -80,6 +81,7 @@ echo "  Nonlocal script  : ${NONLOCAL_SCRIPT:-not needed}"
 echo "  Field base       : ${FIELD_BASE_SCRIPT:-not needed}"
 echo "  Surface base     : ${SURFACE_BASE_SCRIPT:-not needed}"
 echo "  Results          : ${RESULT_DIR}"
+echo "  Parallel GPUs    : ${ARRAY_MAX_PARALLEL}"
 echo
 echo "The job will run M0, M_shuffled, five finite radii, and M_full with identical"
 echo "neural capacity; 27-fold case-out and 9-fold (Ma,Kn)-pair-out CV; five seeds;"
@@ -95,19 +97,81 @@ if [[ ! -f "${FEATURE_TABLE}" ]]; then
   done
 fi
 
-SBATCH_FILE="${WORK_DIR}/run_lekzian_gate.sbatch"
-cat > "${SBATCH_FILE}" <<EOF
+TASK_FILE="${WORK_DIR}/gate_array_tasks.txt"
+TASK_ROOT="${RESULT_DIR}/tasks"
+FINAL_DIR="${RESULT_DIR}/final"
+WORKER_FILE="${WORK_DIR}/run_lekzian_gate_worker.sbatch"
+AGGREGATE_FILE="${WORK_DIR}/run_lekzian_gate_aggregate.sbatch"
+CONTROLLER_FILE="${WORK_DIR}/run_lekzian_gate_controller.sbatch"
+mkdir -p "${TASK_ROOT}" "${FINAL_DIR}"
+
+cat > "${WORKER_FILE}" <<EOF
 #!/usr/bin/env bash
-#SBATCH --job-name=lekzian_gate
+#SBATCH --job-name=lekzian_gate_w
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=24G
+#SBATCH --time=08:00:00
+#SBATCH --output=${LOG_DIR}/lekzian_worker_%A_%a.out
+#SBATCH --error=${LOG_DIR}/lekzian_worker_%A_%a.err
+set -euo pipefail
+module load cuda/12.6 >/dev/null 2>&1 || true
+task_line="\$(sed -n "\$((SLURM_ARRAY_TASK_ID + 1))p" "${TASK_FILE}")"
+IFS='|' read -r scheme outer_group seed <<< "\${task_line}"
+task_name="\$(printf 'task_%03d' "\${SLURM_ARRAY_TASK_ID}")"
+task_out="${TASK_ROOT}/\${task_name}"
+
+"${PYTHON_BIN}" "${GATE_DIR}/gate_test.py" \
+  --feature-table "${FEATURE_TABLE}" \
+  --out "\${task_out}" \
+  --radii 0.1,0.25,0.5,1.0,2.0 \
+  --cv loco,pairout \
+  --seeds "\${seed}" \
+  --only-scheme "\${scheme}" \
+  --only-outer-group "\${outer_group}" \
+  --absolute-tolerances Cp=0.10,Cq=0.10,tau_abs=0.20 \
+  --min-gain-pp 2.0 \
+  --delta-full-pp 2.0 \
+  --skip-summary \
+  --resume
+EOF
+
+cat > "${AGGREGATE_FILE}" <<EOF
+#!/usr/bin/env bash
+#SBATCH --job-name=lekzian_gate_final
+#SBATCH --partition=gpu
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH --time=02:00:00
+#SBATCH --output=${LOG_DIR}/lekzian_final_%j.out
+#SBATCH --error=${LOG_DIR}/lekzian_final_%j.err
+set -euo pipefail
+"${PYTHON_BIN}" "${GATE_DIR}/gate_test.py" \
+  --feature-table "${FEATURE_TABLE}" \
+  --out "${FINAL_DIR}" \
+  --aggregate-task-root "${TASK_ROOT}" \
+  --radii 0.1,0.25,0.5,1.0,2.0 \
+  --cv loco,pairout \
+  --seeds 101,202,303,404,505 \
+  --absolute-tolerances Cp=0.10,Cq=0.10,tau_abs=0.20 \
+  --min-gain-pp 2.0 \
+  --delta-full-pp 2.0
+echo "FINAL DECISION"
+cat "${FINAL_DIR}/gate_decision.txt"
+EOF
+
+cat > "${CONTROLLER_FILE}" <<EOF
+#!/usr/bin/env bash
+#SBATCH --job-name=lekzian_gate_ctl
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=48:00:00
-#SBATCH --output=${LOG_DIR}/lekzian_gate_%j.out
-#SBATCH --error=${LOG_DIR}/lekzian_gate_%j.err
+#SBATCH --time=12:00:00
+#SBATCH --output=${LOG_DIR}/lekzian_controller_%j.out
+#SBATCH --error=${LOG_DIR}/lekzian_controller_%j.err
 set -euo pipefail
-module load cuda/12.6 >/dev/null 2>&1 || true
 
 if [[ ! -f "${FEATURE_TABLE}" ]]; then
   "${PYTHON_BIN}" "${GATE_DIR}/prepare_gate_features.py" \
@@ -119,36 +183,48 @@ if [[ ! -f "${FEATURE_TABLE}" ]]; then
     --max-gas-points 60000
 fi
 
-"${PYTHON_BIN}" "${GATE_DIR}/gate_test.py" \
+"${PYTHON_BIN}" "${GATE_DIR}/make_task_manifest.py" \
   --feature-table "${FEATURE_TABLE}" \
-  --out "${RESULT_DIR}" \
-  --radii 0.1,0.25,0.5,1.0,2.0 \
-  --cv loco,pairout \
-  --seeds 101,202,303,404,505 \
-  --absolute-tolerances Cp=0.10,Cq=0.10,tau_abs=0.20 \
-  --min-gain-pp 2.0 \
-  --delta-full-pp 2.0 \
-  --resume
+  --out "${TASK_FILE}" \
+  --seeds 101,202,303,404,505
 
-echo "FINAL DECISION"
-cat "${RESULT_DIR}/gate_decision.txt"
+task_count="\$(wc -l < "${TASK_FILE}")"
+if [[ "\${task_count}" -ne 180 ]]; then
+  echo "ERROR: expected 180 array tasks, found \${task_count}" >&2
+  exit 3
+fi
+array_submit="\$(sbatch --array=0-179%${ARRAY_MAX_PARALLEL} "${WORKER_FILE}")"
+array_job_id="\$(awk '{print \$NF}' <<< "\${array_submit}")"
+final_submit="\$(sbatch --dependency=afterok:\${array_job_id} "${AGGREGATE_FILE}")"
+final_job_id="\$(awk '{print \$NF}' <<< "\${final_submit}")"
+cat > "${WORK_DIR}/LAST_LEKZIAN_GATE_JOB.env" <<ENV
+CONTROLLER_JOB_ID=\${SLURM_JOB_ID}
+ARRAY_JOB_ID=\${array_job_id}
+FINAL_JOB_ID=\${final_job_id}
+TASK_FILE=${TASK_FILE}
+RESULT_DIR=${FINAL_DIR}
+ENV
+echo "\${array_submit}"
+echo "\${final_submit}"
+echo "Monitor array: squeue -j \${array_job_id}"
+echo "Final result : cat ${FINAL_DIR}/gate_decision.txt"
 EOF
 
 if command -v sbatch >/dev/null 2>&1; then
-  submit_output="$(sbatch "${SBATCH_FILE}")"
+  submit_output="$(sbatch "${CONTROLLER_FILE}")"
   job_id="$(awk '{print $NF}' <<< "${submit_output}")"
   env_file="${WORK_DIR}/LAST_LEKZIAN_GATE_JOB.env"
   cat > "${env_file}" <<EOF
 JOB_ID=${job_id}
-OUT=${LOG_DIR}/lekzian_gate_${job_id}.out
-ERR=${LOG_DIR}/lekzian_gate_${job_id}.err
-RESULT_DIR=${RESULT_DIR}
+OUT=${LOG_DIR}/lekzian_controller_${job_id}.out
+ERR=${LOG_DIR}/lekzian_controller_${job_id}.err
+RESULT_DIR=${FINAL_DIR}
 EOF
   echo "${submit_output}"
   echo "Monitor: squeue -j ${job_id}"
-  echo "Log    : tail -f ${LOG_DIR}/lekzian_gate_${job_id}.out"
-  echo "Result : cat ${RESULT_DIR}/gate_decision.txt"
+  echo "Log    : tail -f ${LOG_DIR}/lekzian_controller_${job_id}.out"
+  echo "Result : cat ${FINAL_DIR}/gate_decision.txt"
 else
-  echo "sbatch not found; running the generated job script interactively."
-  bash "${SBATCH_FILE}"
+  echo "ERROR: this launcher requires Slurm/sbatch on Unity." >&2
+  exit 2
 fi
