@@ -29,8 +29,13 @@ def synthetic_table(n=24):
             "Cp": rng.normal(size=n),
             "Cq": rng.normal(size=n),
             "tau_abs": rng.normal(size=n),
+            "gate_sample_weight": np.ones(n),
         }
     )
+    for j in range(7):
+        frame[f"operator_case_f{j:03d}"] = np.resize(np.arange(6, dtype=float), n) + 0.01 * j
+    for j in range(4):
+        frame[f"operator_surface_f{j:03d}"] = rng.normal(size=n)
     for ring in ["ring_0p0_0p1", "ring_0p1_0p25", "ring_0p25_inf"]:
         frame[f"{ring}_u_mean"] = rng.normal(size=n)
         frame[f"{ring}_T_std"] = rng.normal(size=n)
