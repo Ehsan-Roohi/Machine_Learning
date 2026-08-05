@@ -141,6 +141,7 @@ cat > "${AGGREGATE_FILE}" <<EOF
 #!/usr/bin/env bash
 #SBATCH --job-name=lekzian_gate_final
 #SBATCH --partition=gpu
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=02:00:00
