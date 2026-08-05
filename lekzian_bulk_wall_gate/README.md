@@ -22,15 +22,18 @@ as provenance/reference, not as evidence that the old comparison was fair:
   used during descriptor reconstruction.
 
 `prepare_gate_features.py` reuses the original `16`, `10`, and `06` surface
-reader/geometry code found on Unity. It emits only the full six-annulus table;
-all radius variants are then produced by masking that single fixed-width table.
+reader/geometry code found on Unity. It also embeds the exact case features,
+surface features, and peak/apex weights used by the strong direct-wall operator.
+It emits only the full six-annulus table; all radius variants are then produced
+by masking that single fixed-width table.
 
 ## What is matched
 
-All candidates use the same 27 Phase-1 physical cases, fixed full-annulus input
-width, neural architecture, number of parameters, optimizer, epoch budget, and
-outer folds. Hidden annuli are median-filled (zero after train-only
-standardisation) and represented by masks. The configurations are:
+All candidates use the same 27 Phase-1 physical cases, the strong surface-only
+branch/trunk/gated-decoder architecture, its original engineered case/surface
+features and weights, fixed full-annulus input width, number of parameters,
+optimizer, epoch budget, and outer folds. Hidden annuli are median-filled (zero
+after train-only standardisation) and represented by masks. The configurations are:
 
 - `M0`: parameters, geometry, and surface location only.
 - `M_shuffled`: full bulk descriptor marginals with their physical alignment
@@ -55,15 +58,20 @@ Established defaults:
 - Python: `/work/pi_roohie_umass_edu/roohie_umass_edu/.conda/envs/dsmc-gpu/bin/python`
 - working directory: `/project/pi_roohie_umass_edu/Combustion/LEKZIAN_BULK_WALL_GATE`
 
-The launcher first searches for an existing `surface_patch_dataset_full.csv`.
+The launcher first searches for an existing `surface_patch_dataset_full_gate.csv`.
 If it is absent, it searches for the original audit and scripts and builds the
 full annular table once. Every resolved path and the planned scientific test are
-printed before Slurm submission. Ambiguous/missing inputs stop the run instead
-of silently selecting a substitute. Explicit paths can be supplied, for example:
+printed before Slurm submission. Missing inputs stop the run instead of silently
+selecting a substitute. Explicit paths can be supplied, for example:
 
 ```bash
-FEATURE_TABLE=/absolute/path/surface_patch_dataset_full.csv bash <(curl -fsSL "https://raw.githubusercontent.com/Ehsan-Roohi/Machine_Learning/agent/lekzian-gate-test/lekzian_bulk_wall_gate/run_unity_gate.sh")
+FEATURE_TABLE=/absolute/path/surface_patch_dataset_full_gate.csv bash <(curl -fsSL "https://raw.githubusercontent.com/Ehsan-Roohi/Machine_Learning/agent/lekzian-gate-test/lekzian_bulk_wall_gate/run_unity_gate.sh")
 ```
+
+The full calculation is split into 180 resumable Slurm-array tasks
+(`36 outer folds × 5 seeds`), each running all eight matched configurations.
+Four GPUs are used concurrently by default; set `ARRAY_MAX_PARALLEL` to a
+quota-appropriate value to change this.
 
 ## Predeclared gate
 
