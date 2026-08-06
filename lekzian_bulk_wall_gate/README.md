@@ -1,5 +1,32 @@
 # Lekzian–Roohi matched-capacity bulk-to-wall Gate Test
 
+## Stage-1 V2: existing-data route for a new Physics of Fluids paper
+
+The completed first Gate Test is retained as an audit trail. Its five-seed
+surface predictions showed that ensembling materially changes the conclusion,
+while the direct 198-feature `M_full` input still confounds spatial support with
+active statistical dimension.
+
+The prospective existing-data test is now [`STAGE1_V2.md`](STAGE1_V2.md). It
+uses independent quantity-specific models, the original strong structured
+direct-wall path for `M0`, a shared fixed-dimensional annular encoder,
+ensemble-first inner-fold radius selection with explicit censoring,
+matched-count near/far/interleaved controls, and coherent case-profile
+permutation. It does not require higher-order SPARTA moments or new DSMC
+simulations.
+
+Run it on Unity with:
+
+```bash
+bash <(curl -fsSL "https://raw.githubusercontent.com/Ehsan-Roohi/Machine_Learning/agent/lekzian-gate-test/lekzian_bulk_wall_gate/run_unity_stage1_v2.sh")
+```
+
+The target interpretation is an accuracy-qualified, model-conditional
+**predictive spatial support** for a substantially new Physics of Fluids
+manuscript—not a cosmetic revision of the rejected horizon claim. A future PoF
+submission must still disclose the declined paper and include the journal's
+required response letter.
+
 This package answers the methodological objection raised for manuscript
 `PF#POF26-AR-10014R-Appeal`: the old ExtraTrees parameter-only baseline and the
 4–5% parameter-conditioned wall surrogate did not use matched capacity,
