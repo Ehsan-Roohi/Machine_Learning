@@ -1,5 +1,25 @@
 # Lekzian–Roohi matched-capacity bulk-to-wall Gate Test
 
+## Conditional Stage-2 after the completed V2 diagnosis
+
+The full Stage-1 V2 audit showed nearly uniform six-ring attention and no
+significant near-versus-far or real-versus-permuted advantage. The follow-up is
+therefore not a larger end-to-end network. [`STAGE2_CONDITIONAL.md`](STAGE2_CONDITIONAL.md)
+freezes an independently trained wall baseline, removes base-predictable bulk
+content, adds outer/adjacent annular contrasts, excludes nonphysical ring-count
+channels, emphasizes the Stage-1-identified apex region, and evaluates cyclic
+surface-alignment and radial-order controls.
+
+It still uses the existing Phase-1 table and requires no new SPARTA output:
+
+```bash
+bash <(curl -fsSL "https://raw.githubusercontent.com/Ehsan-Roohi/Machine_Learning/agent/lekzian-gate-test/lekzian_bulk_wall_gate/run_unity_stage2_conditional.sh")
+```
+
+Stage-2 is the final existing-data test of a spatial-support interpretation. If
+conditional bulk gain remains nonlocal, the manuscript must pivot to bulk-state
+augmentation rather than weaken the prospective criteria.
+
 ## Stage-1 V2: existing-data route for a new Physics of Fluids paper
 
 The completed first Gate Test is retained as an audit trail. Its five-seed
