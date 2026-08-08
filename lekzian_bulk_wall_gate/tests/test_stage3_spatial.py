@@ -78,6 +78,11 @@ class SpatialStage3Tests(unittest.TestCase):
 
     def test_model_is_compact_and_context_only_is_patch_invariant(self):
         model = stage3.SpatialOperator(context_dim=33, patch_channels=6)
+        # Prediction always runs in eval mode.  Keeping the model in its
+        # default train mode would resample Dropout in the context branch on
+        # each call and falsely attribute that stochastic difference to the
+        # masked patch.
+        model.eval()
         count = sum(parameter.numel() for parameter in model.parameters())
         self.assertLess(count, 100_000)
         context = torch.randn(5, 33)
