@@ -1,5 +1,26 @@
 # Lekzian–Roohi matched-capacity bulk-to-wall Gate Test
 
+## Spatial Stage 3: the no-new-DSMC rescue experiment
+
+The completed Conditional Stage 2 showed that six annular summary blocks were
+too redundant to identify proximity or correct wall alignment. The next test
+therefore preserves the existing field's two-dimensional structure instead of
+adding moments or simulations. [`STAGE3_SPATIAL.md`](STAGE3_SPATIAL.md) samples
+wall-aligned patches of the already archived `(u,v,T,logP)` fields and trains
+one compact, capacity-matched three-target operator with near/far,
+upstream/downstream, surface-shift, and radial-flip controls.
+
+It performs **zero new SPARTA/DSMC runs** and needs **no higher-order moments**:
+
+```bash
+bash <(curl -fsSL "https://raw.githubusercontent.com/Ehsan-Roohi/Machine_Learning/agent/lekzian-gate-test/lekzian_bulk_wall_gate/run_unity_stage3_spatial.sh")
+```
+
+The design uses 108 resumable GPU tasks (`36 folds × 3 seeds`) and a hard
+100,000-parameter ceiling. Its automatic decision explicitly separates a local
+predictive-support result from a useful but nonlocal spatial-augmentation
+result, preventing another overclaim.
+
 ## Conditional Stage-2 after the completed V2 diagnosis
 
 The full Stage-1 V2 audit showed nearly uniform six-ring attention and no
