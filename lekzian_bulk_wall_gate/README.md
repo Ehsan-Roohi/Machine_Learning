@@ -1,5 +1,30 @@
 # Lekzian–Roohi matched-capacity bulk-to-wall Gate Test
 
+## Stage 4: Physics of Fluids representation audit
+
+Stage 3 is complete and its prospective verdict remains locked as
+`NO_ACTIONABLE_SPATIAL_BULK_SIGNAL`. The next calculation is therefore not a
+larger model and does not lower the original threshold. [`STAGE4_POF_AUDIT.md`](STAGE4_POF_AUDIT.md)
+is an explicitly exploratory falsification audit for a possible **Physics of
+Fluids** redesign.
+
+It repeats the same folds, seeds, compact operator, preprocessing, and training
+schedule while comparing the intact field with patch-mean, cell-permuted,
+case-pooled, surface-permuted, and individual-channel-ablation controls. It also
+localizes paired gains across Mach number, Knudsen number, and geometry.
+
+It uses the completed Stage-3 dataset and performs **zero new DSMC/SPARTA
+simulations**:
+
+```bash
+bash <(curl -fsSL "https://raw.githubusercontent.com/Ehsan-Roohi/Machine_Learning/agent/lekzian-gate-test/lekzian_bulk_wall_gate/run_unity_stage4_pof_audit.sh")
+```
+
+The only positive manuscript outcome is an accuracy-qualified, structured,
+wall-aligned `Cp` signal. Even then, the allowed claim is quantity-dependent
+predictive representation support—not a causal information horizon or physical
+observability radius.
+
 ## Spatial Stage 3: the no-new-DSMC rescue experiment
 
 The completed Conditional Stage 2 showed that six annular summary blocks were
