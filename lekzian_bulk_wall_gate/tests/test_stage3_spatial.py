@@ -2,8 +2,10 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 
 try:
     import torch
@@ -31,6 +33,17 @@ stage3 = load("stage3_spatial")
 
 
 class SpatialStage3Tests(unittest.TestCase):
+    def test_wall_coordinates_from_phase1_panel_vertices(self):
+        surface = pd.DataFrame({
+            "v1x": [0.0, 1.0], "v1y": [0.0, 0.5],
+            "v2x": [1.0, 3.0], "v2y": [0.5, 1.5],
+            "s01": [0.0, 1.0],
+        })
+        wall_xy, source = prepare.discover_wall_xy(SimpleNamespace(surface=surface))
+        expected = np.asarray([[0.5, 0.25], [2.0, 1.0]])
+        self.assertTrue(np.allclose(wall_xy, expected))
+        self.assertIn("midpoint", source)
+
     def test_target_flux_scaling_roundtrip(self):
         rng = np.random.default_rng(4)
         targets = rng.normal(size=(12, 3))
