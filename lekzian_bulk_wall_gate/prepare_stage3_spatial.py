@@ -115,6 +115,22 @@ def discover_wall_xy(case) -> Tuple[np.ndarray, str]:
             if x_name in lower and y_name in lower:
                 xy = surface[[lower[x_name], lower[y_name]]].to_numpy(float)
                 return xy, f"surface[{lower[x_name]},{lower[y_name]}]"
+        # The audited Phase-1 surface workbooks store each wall panel by its
+        # two vertices rather than by an explicit centre coordinate.  Targets
+        # (Cp, Cq, shear) are panel-centred, so their collocated wall location
+        # is the exact midpoint of the stored vertices.
+        vertex_schemas = (
+            ("v1x", "v1y", "v2x", "v2y"),
+            ("x1", "y1", "x2", "y2"),
+        )
+        for x1, y1, x2, y2 in vertex_schemas:
+            if all(name in lower for name in (x1, y1, x2, y2)):
+                first = surface[[lower[x1], lower[y1]]].to_numpy(float)
+                second = surface[[lower[x2], lower[y2]]].to_numpy(float)
+                xy = 0.5 * (first + second)
+                if not np.isfinite(xy).all():
+                    raise RuntimeError("Non-finite wall-panel midpoint coordinates were found.")
+                return xy, f"midpoint(surface[{x1},{y1}],surface[{x2},{y2}])"
     for name in ("wall_xy", "surface_xy", "surf_xy"):
         if hasattr(case, name):
             xy = np.asarray(getattr(case, name), dtype=float)
