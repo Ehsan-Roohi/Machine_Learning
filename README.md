@@ -24,6 +24,8 @@ Read [`JFM_R13_R26_PROTECTION.md`](JFM_R13_R26_PROTECTION.md) before changing
 any R13/R26 source, patch, workflow, reference data, or numerical constants.
 Repository cleanup must not rewrite, combine, or relabel those scientific
 assets.  Documentation-only maintenance is intentionally kept separate.
+The complete branch/PR inventory is indexed in
+[`OPEN_RESEARCH_PRS.md`](OPEN_RESEARCH_PRS.md).
 
 ## Status language
 
