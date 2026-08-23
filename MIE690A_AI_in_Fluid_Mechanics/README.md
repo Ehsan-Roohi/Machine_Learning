@@ -18,14 +18,14 @@ Start with [START_HERE.md](START_HERE.md). It gives the installation check, reco
 | Resource | Contents |
 | --- | --- |
 | `lectures/` | Five lecture/guide PDFs covering Weeks 1–6, plus editable LaTeX/PPTX sources where available |
-| `notebooks/week01`–`week04` | Nine guided laboratories: Python, TensorFlow, validated cavity CFD, supervised learning, rarefaction, Maxwellian sampling, DSMC, scalar/field surrogates, and an executed POD-DeepONet study |
+| `notebooks/week01`–`week04` | Nine guided laboratories: Python, TensorFlow, validated cavity CFD, supervised learning, rarefaction, Maxwellian sampling, DSMC, scalar/field surrogates, and a POD-DeepONet study |
 | `notebooks/P0`–`P6` | Seven expanded research-project notebooks with conceptual notes, frozen decision gates, physical diagnostics, troubleshooting, deliverables, and further reading |
 | `common/` | Shared CFD, surrogate, POD, kinetic, and QA utilities |
 | `data/` | Fixed 11-case cavity reference dataset and numerical-quality table |
-| `results/article_validation/` | Executed Re=1000 pressure-recovery runs and independent Botella--Peyret reference data |
-| `results/dsmc_validation/` | Four executed HS--NTC wall-pressure runs and Mohammadzadeh Fig. 3 DSMC markers |
+| `results/article_validation/` | Re=1000 pressure-recovery solutions and independent Botella--Peyret reference data |
+| `results/dsmc_validation/` | Four HS--NTC wall-pressure solutions and Mohammadzadeh Fig. 3 DSMC markers |
 | `results/article_figures/` | Paper-ready PNG/PDF validation figures and machine-readable error summaries |
-| `results/pod_deeponet/` | Executed model-selection, blind-case, Ghia-centerline, timing, and full-field POD-DeepONet evidence |
+| `results/pod_deeponet/` | Model-selection, blind-case, Ghia-centerline, timing, and full-field POD-DeepONet evidence |
 | `advanced/fp_closure/` | Bounded educational workflow for exact and learned Fokker–Planck closure testing |
 | `references/` | Annotated reading guide and BibTeX database |
 | `qa/` | Release validator for notebook syntax, required assets, and reproducibility anchors |
@@ -67,9 +67,9 @@ The streamfunction–vorticity solver is an educational reference. Re = 100 and 
 
 The reference dataset SHA-256 is recorded in `common/reproducibility.txt` and checked by the release validator.
 
-The Week-1 cavity notebook now opens with both velocity and pressure validation. The Week-3 DSMC notebook opens with a direct comparison of our executed solver against Mohammadzadeh *et al.* at the same $Re=1.5$, $Kn=0.1$, $Ma=0.09$ condition. Both notebooks generate the exact paper-facing figures through `common/article_validation.py`; optional switches expose the full numerical reruns without forcing every learner to wait for them.
+The Week-1 cavity notebook opens with both velocity and pressure validation. The Week-3 DSMC notebook opens with a direct comparison of the package solver against Mohammadzadeh *et al.* at the same $Re=1.5$, $Kn=0.1$, $Ma=0.09$ condition. Both notebooks generate the paper-facing figures through `common/article_validation.py`; optional switches expose full numerical generation.
 
-## Executed POD-DeepONet result
+## POD-DeepONet validation result
 
 Run `python common/run_pod_deeponet_validation.py` to reproduce the CPU study. The development-only rule selects a rank-3 POD trunk and a `(32,32)` tanh branch. The untouched `Re = 175, 275, 375` fields have three-seed ensemble velocity errors of **0.4525%**, **0.0718%**, and **0.0928%**. Wall error is exactly zero by the declared output transform and the discrete divergence norm remains at round-off because the trunk is built from divergence-free CFD snapshots.
 
@@ -104,4 +104,4 @@ Department of Mechanical and Industrial Engineering
 University of Massachusetts Amherst  
 roohie@umass.edu
 
-Copyright © 2026 Ehsan Roohi. A formal code/content license will be selected before the final archival release.
+Copyright © 2026 Ehsan Roohi. Released under the MIT License; see [LICENSE](LICENSE).
