@@ -1,11 +1,18 @@
 cff-version: 1.2.0
-message: "If you use these course materials, please cite the associated manuscript and this repository."
-title: "MIE 690A: AI in Fluid Mechanics — Complete Reproducible Jupyter Curriculum"
+message: "If you use FlowMLLab, please cite the archived software release and associated SoftwareX article."
+title: "FlowMLLab: A framework for reproducible CFD-to-scientific-machine-learning experiments"
 type: software
 authors:
   - family-names: Roohi
     given-names: Ehsan
     orcid: "https://orcid.org/0000-0001-5739-3210"
-repository-code: "https://github.com/Ehsan-Roohi/Machine_Learning/tree/main/MIE690A_AI_in_Fluid_Mechanics"
-version: "2026.08.23"
+repository-code: "https://github.com/Ehsan-Roohi/Machine_Learning/tree/main/FlowMLLab"
+version: "1.0.0"
 date-released: "2026-08-23"
+license: MIT
+keywords:
+  - computational fluid dynamics
+  - scientific machine learning
+  - direct simulation Monte Carlo
+  - neural operators
+  - reproducibility
