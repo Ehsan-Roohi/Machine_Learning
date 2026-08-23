@@ -1,0 +1,3 @@
+Trigger nonlinear-source R26 continuation from validated 10k checkpoint through required 40k and 50k checkpoints.
+Seed artifact: ASTR_R26_NONLINEAR_SOURCE_V1_32X32_TO_10K
+Seed workflow run: 29657208309
