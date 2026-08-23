@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproduce the manuscript's solver-validation figures from retained runs.
+"""Reproduce the manuscript's solver-validation figures from retained evidence.
 
 This module is the single source of truth shared by the Week-1 cavity notebook,
 the Week-3 DSMC notebook, and the manuscript.  It never fabricates a comparison
@@ -20,13 +20,13 @@ import pandas as pd
 
 
 def find_course_root(start: str | Path | None = None) -> Path:
-    """Locate the release root from a notebook, script, or Colab directory."""
+    """Locate the FlowMLLab root from a notebook, script, or Colab directory."""
     starts = [Path(start or Path.cwd()).resolve(), Path(__file__).resolve()]
     for origin in starts:
         for candidate in (origin, *origin.parents):
             if (candidate / "common" / "w4utils.py").exists() and (candidate / "data").exists():
                 return candidate
-    raise FileNotFoundError("Could not locate the MIE690A course root.")
+    raise FileNotFoundError("Could not locate the FlowMLLab repository root.")
 
 
 def _load_npz(path: Path) -> dict[str, np.ndarray]:
@@ -111,10 +111,10 @@ def build_ghia_velocity_validation(
     )
     cbar = fig.colorbar(contour, ax=ax_field, orientation="horizontal", pad=0.05, shrink=0.88)
     cbar.set_label(r"Speed $|\mathbf{u}|/U_{lid}$", fontsize=13)
-    ax_u.plot(u[:, mid_x], y, color="#1261A0", label="course solver")
+    ax_u.plot(u[:, mid_x], y, color="#1261A0", label="FlowMLLab solver")
     ax_u.scatter(ref["u"], ref["y"], s=48, color="#E87500", edgecolor="white", linewidth=0.6, label="Ghia et al.", zorder=3)
     ax_u.set(title=r"(b) Vertical centerline $u(x/L=0.5,y)$", xlabel=r"$u/U_{lid}$", ylabel=r"$y/L$", ylim=(0, 1.04))
-    ax_v.plot(x, v[mid_y, :], color="#1261A0", label="course solver")
+    ax_v.plot(x, v[mid_y, :], color="#1261A0", label="FlowMLLab solver")
     ax_v.scatter(ref["x"], ref["v"], s=48, color="#E87500", edgecolor="white", linewidth=0.6, label="Ghia et al.", zorder=3)
     ax_v.set(title=r"(c) Horizontal centerline $v(x,y/L=0.5)$", xlabel=r"$x/L$", ylabel=r"$v/U_{lid}$", xlim=(-0.02, 1.02))
     for axis in (ax_u, ax_v):
@@ -181,19 +181,19 @@ def build_pressure_validation(
     im = axes[0, 0].contourf(*np.meshgrid(xf, yf), pf, levels=levels, cmap="coolwarm", extend="both")
     axes[0, 0].set(title=r"(a) Recovered pressure, $Re=1000$, $129^2$ grid", xlabel=r"$x/L$", ylabel=r"$y/L$", aspect="equal")
     fig.colorbar(im, ax=axes[0, 0], shrink=0.9, label=r"$(p-p_c)/(\rho U_{lid}^2)$")
-    axes[0, 1].plot(pc[:, mc], yc, "--", color="#94A3B8", label=rf"course $65^2$ ($E={100*evc:.1f}\%$)")
-    axes[0, 1].plot(pf[:, mf], yf, color="#1D4ED8", label=rf"course $129^2$ ($E={100*evf:.2f}\%$)")
+    axes[0, 1].plot(pc[:, mc], yc, "--", color="#94A3B8", label=rf"FlowMLLab $65^2$ ($E={100*evc:.1f}\%$)")
+    axes[0, 1].plot(pf[:, mf], yf, color="#1D4ED8", label=rf"FlowMLLab $129^2$ ($E={100*evf:.2f}\%$)")
     axes[0, 1].scatter(vertical["p_over_rhoU2"], vertical["coordinate"], s=42, facecolors="white", edgecolors="black", linewidths=1.2, zorder=3, label="Botella--Peyret")
     axes[0, 1].set(title="(b) Vertical centerline", xlabel=r"$(p-p_c)/(\rho U_{lid}^2)$", ylabel=r"$y/L$")
-    axes[1, 0].plot(xc, pc[mc, ::-1], "--", color="#94A3B8", label=rf"course $65^2$ ($E={100*ehc:.1f}\%$)")
-    axes[1, 0].plot(xf, pf[mf, ::-1], color="#B45309", label=rf"course $129^2$ ($E={100*ehf:.2f}\%$)")
+    axes[1, 0].plot(xc, pc[mc, ::-1], "--", color="#94A3B8", label=rf"FlowMLLab $65^2$ ($E={100*ehc:.1f}\%$)")
+    axes[1, 0].plot(xf, pf[mf, ::-1], color="#B45309", label=rf"FlowMLLab $129^2$ ($E={100*ehf:.2f}\%$)")
     axes[1, 0].scatter(horizontal["coordinate"], horizontal["p_over_rhoU2"], s=42, facecolors="white", edgecolors="black", linewidths=1.2, zorder=3, label="Botella--Peyret")
     axes[1, 0].set(title="(c) Horizontal centerline (lid-direction mapped)", xlabel=r"$x/L$", ylabel=r"$(p-p_c)/(\rho U_{lid}^2)$")
     positions, width = np.arange(2), 0.34
     axes[1, 1].bar(positions - width / 2, 100 * np.array([evc, ehc]), width, color="#94A3B8", label=r"$65^2$")
     axes[1, 1].bar(positions + width / 2, 100 * np.array([evf, ehf]), width, color=["#1D4ED8", "#B45309"], label=r"$129^2$")
     axes[1, 1].set(title="(d) Literature error decreases under refinement", ylabel=r"centerline relative $L_2$ error (\%)", xticks=positions, xticklabels=["vertical", "horizontal"], ylim=(0, 24))
-    axes[1, 1].text(0.98, 0.95, f"129² executed run\nsteady residual: {float(fine['final_residual']):.2e}\ngradient mismatch: {100*interior_mismatch:.2f}% interior\n({100*global_mismatch:.1f}% including corners)", transform=axes[1, 1].transAxes, ha="right", va="top", fontsize=12, bbox={"boxstyle": "round,pad=0.45", "facecolor": "white", "edgecolor": "0.65"})
+    axes[1, 1].text(0.98, 0.95, f"129² grid\nsteady residual: {float(fine['final_residual']):.2e}\ngradient mismatch: {100*interior_mismatch:.2f}% interior\n({100*global_mismatch:.1f}% including corners)", transform=axes[1, 1].transAxes, ha="right", va="top", fontsize=12, bbox={"boxstyle": "round,pad=0.45", "facecolor": "white", "edgecolor": "0.65"})
     for axis in (axes[0, 1], axes[1, 0], axes[1, 1]):
         axis.grid(alpha=0.25)
         axis.legend(loc="best", framealpha=0.96)
@@ -208,7 +208,7 @@ def build_dsmc_wall_pressure_validation(
     root: str | Path | None = None,
     output_dir: str | Path | None = None,
 ) -> dict:
-    """Validate our executed HS--NTC solver against Mohammadzadeh Fig. 3."""
+    """Validate the HS--NTC solver against Mohammadzadeh Fig. 3."""
     root = find_course_root(root)
     output_dir = Path(output_dir or root / "results" / "article_figures")
     validation = root / "results" / "dsmc_validation"
@@ -222,7 +222,7 @@ def build_dsmc_wall_pressure_validation(
         if not np.isclose(float(metadata[key]), float(value)):
             raise ValueError(f"Retained DSMC run has {key}={metadata[key]!r}; expected {value!r}.")
     if metadata.get("backend_used") != "numpy-cpu-vectorized":
-        raise ValueError("The retained paper curve is not tagged as an executed vectorized CPU run.")
+        raise ValueError("The retained paper curve is not tagged as the validated vectorized CPU configuration.")
     xc = coarse_cases[0]["s_over_L"].to_numpy()
     yc = np.stack([case["p_five_point_filtered_over_p0"].to_numpy() for case in coarse_cases])
     coarse_mean, coarse_std = yc.mean(axis=0), yc.std(axis=0, ddof=1)
@@ -254,7 +254,7 @@ def build_dsmc_wall_pressure_validation(
         for boundary in (1, 2, 3):
             axis.axvline(boundary, color="#94A3B8", ls=":", lw=1.0, zorder=0)
     fig.subplots_adjust(left=0.07, right=0.985, bottom=0.13, top=0.84, wspace=0.22)
-    fig.suptitle("Executed HS--NTC solver versus Mohammadzadeh DSMC wall pressure", y=0.98, fontsize=18, fontweight="bold")
+    fig.suptitle("HS--NTC solver validation against Mohammadzadeh DSMC wall pressure", y=0.98, fontsize=18, fontweight="bold")
     paths = _save(fig, output_dir, "fig10a_mohammadzadeh_validation")
     metrics = {"relative_l2": relative_l2, "rmse_over_p0": rmse, "max_abs_over_p0": maximum, "grid_change_40_to_60": grid_change, "fine_run": "ref_n60_seed07", "coarse_runs": list(coarse_names)}
     (output_dir / "fig10a_mohammadzadeh_validation_metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")

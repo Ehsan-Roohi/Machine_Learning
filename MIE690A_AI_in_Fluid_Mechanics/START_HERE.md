@@ -21,11 +21,15 @@ Python 3.12 is the compatibility target used for the release.
 python -m venv .venv
 source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python qa/validate_course_release.py
+python -m pip install -e ".[test]"
+flowmllab smoke --root .
+flowmllab qa --root .
 ```
 
-If TensorFlow is unavailable on your platform, continue with the data-audit, interpolation, POD, and plotting sections. Use Google Colab for TensorFlow-specific cells.
+For neural-network training, install `python -m pip install -e ".[ml,test]"`.
+If TensorFlow is unavailable on your platform, continue with the data-audit,
+interpolation, POD, and plotting sections. Use Google Colab for
+TensorFlow-specific cells.
 
 ## 3. Run the 20-minute evidence chain
 

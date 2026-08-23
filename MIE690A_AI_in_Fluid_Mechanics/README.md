@@ -1,5 +1,8 @@
 # FlowMLLab
 
+[![FlowMLLab CI](https://github.com/Ehsan-Roohi/Machine_Learning/actions/workflows/flowmllab-ci.yml/badge.svg)](https://github.com/Ehsan-Roohi/Machine_Learning/actions/workflows/flowmllab-ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 **FlowMLLab** is an open-source framework for reproducible CFD-to-scientific-machine-learning experiments. It integrates transparent continuum and particle solvers, case-wise data partitions, non-neural baselines, coordinate networks, POD-DeepONet models, physical diagnostics, machine-readable evidence, and release checks.
 
 The repository also contains the complete tutorial and lecture layer developed for the six-week graduate course **MIE 690A: AI in Fluid Mechanics**, University of Massachusetts Amherst, Summer 2026. The reusable modules, datasets, validators, and figure builders are the software core; the notebooks are documented examples of that framework.
@@ -19,6 +22,8 @@ Start with [START_HERE.md](START_HERE.md). It gives the installation check, reco
 
 | Resource | Contents |
 | --- | --- |
+| `flowmllab/` | Installable Python package, scientific asset checks, repository QA, and figure-generation CLI |
+| `pyproject.toml` | Versioned package metadata, locked core dependencies, optional ML/test environments, and `flowmllab` entry point |
 | `lectures/` | Five lecture/guide PDFs covering Weeks 1–6, plus editable LaTeX/PPTX sources where available |
 | `notebooks/week01`–`week04` | Nine guided laboratories: Python, TensorFlow, validated cavity CFD, supervised learning, rarefaction, Maxwellian sampling, DSMC, scalar/field surrogates, and a POD-DeepONet study |
 | `notebooks/P0`–`P6` | Seven expanded research-project notebooks with conceptual notes, frozen decision gates, physical diagnostics, troubleshooting, deliverables, and further reading |
@@ -50,10 +55,17 @@ The exact manuscript-figure ownership and reproduction commands are in [ARTICLE_
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python qa/validate_course_release.py
-python common/article_validation.py all
+python -m pip install --upgrade pip
+python -m pip install -e ".[test]"       # core framework and QA
+flowmllab smoke --root .
+flowmllab qa --root .
+flowmllab figures all --root .
 ```
+
+Install the neural-network stack with `python -m pip install -e ".[ml,test]"`.
+The exact core and ML dependency versions are recorded in `pyproject.toml` and
+`requirements.txt`. The `flowmllab` commands are the supported programmatic
+entry points; notebooks are tutorials that call the same shared modules.
 
 For Google Colab, upload the notebook and the files named in its **Required files** section. Project notebooks also contain a repository bootstrap cell, so they can be launched from this checkout without manually copying `common/` or `data/` files.
 
