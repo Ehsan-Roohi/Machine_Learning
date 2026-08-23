@@ -5,7 +5,7 @@ This release closes the gap between the teaching notebooks and the manuscript fi
 - All 16 notebooks carry an explicit article-output contract.
 - The Week-1 cavity notebook begins with executed Ghia velocity and Botella--Peyret pressure validation, embeds the current figures/metrics, and provides an optional exact rerun of the $Re=1000$ grids.
 - The Week-3 DSMC notebook begins with direct validation of our HS--NTC solver against Mohammadzadeh DSMC wall pressure. It embeds the current comparison/residual figure and provides the exact four-run recomputation protocol.
-- `common/article_validation.py` is the shared figure builder for article Figures 2, 5, and 8 in the compiled v3 manuscript.
+- `common/article_validation.py` is the shared builder for the manuscript's cavity-velocity, cavity-pressure, and direct DSMC-validation figure assets.
 - `ARTICLE_FIGURE_MAP.md` maps all paper-facing evidence to its owner notebook, retained inputs, outputs, and rerun command.
 - `qa/validate_course_release.py` checks notebook synchronization, figure assets, numerical thresholds, lecture PDFs, POD-DeepONet evidence, and the fixed dataset hash.
 
