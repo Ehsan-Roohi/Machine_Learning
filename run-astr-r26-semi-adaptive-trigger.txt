@@ -1,0 +1,1 @@
+Continue the validated semi-linear R26 32x32 U=100 m/s cavity from step 20000 in 2000-step increments. Stop after two consecutive convergence passes or at step 60000.
