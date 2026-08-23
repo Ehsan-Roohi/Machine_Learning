@@ -1,0 +1,207 @@
+name: Fresh corrected ASTR R13 from equilibrium to 100k
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - 'run-r13-fresh-equilibrium-100k-trigger.txt'
+      - '.github/workflows/run-r13-fresh-equilibrium-100k.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: astr-r13-fresh-equilibrium-100k-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fresh-r13-equilibrium-to-100k:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install compiler and analysis libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            gfortran cmake make openmpi-bin libopenmpi-dev \
+            libhdf5-openmpi-dev unzip zip \
+            python3-h5py python3-numpy python3-scipy python3-matplotlib python3-pandas
+
+      - name: Download verified ASTR R13 source bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005
+          run-id: 29624062741
+          github-token: ${{ github.token }}
+          path: source_artifact
+
+      - name: Restore clean source and equilibrium case
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SOURCE_INNER=$(find source_artifact -type f -name 'ASTR_NONLINEAR_R13_JFM_CAVITY_U100_KN005.zip' -print -quit)
+          test -n "$SOURCE_INNER"
+          mkdir source_restored
+          unzip -q "$SOURCE_INNER" -d source_restored
+          cp -a source_restored/astr ./astr
+          cp -a source_restored/case ./fresh_case
+          rm -rf astr/build
+          rm -rf fresh_case/outdat fresh_case/bakup fresh_case/monitor fresh_case/islice fresh_case/jslice fresh_case/kslice fresh_case/testout
+          rm -f fresh_case/errnode.log fresh_case/flowstate.dat fresh_case/time_report.* fresh_case/visu.xdmf
+          mkdir -p fresh_case/outdat fresh_case/bakup fresh_case/monitor fresh_case/islice fresh_case/jslice fresh_case/kslice fresh_case/testout
+          cp -a fresh_case/datin fresh_case/input
+
+      - name: Apply corrected two-dimensional R13 source patch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p audits patches
+          python3 - <<'PY'
+          from pathlib import Path
+          import difflib, json
+          p=Path('astr/src/methodmoment.F90')
+          original=p.read_text()
+          old='(dqx(0:im,0:jm,0:km,1)+dqy(0:im,0:jm,0:km,2)+dqy(0:im,0:jm,0:km,3))'
+          new='(dqx(0:im,0:jm,0:km,1)+dqy(0:im,0:jm,0:km,2)+dqz(0:im,0:jm,0:km,3))'
+          if original.count(old) != 1:
+              raise RuntimeError(f'expected exactly one Delta div(q) typo, found {original.count(old)}')
+          patched=original.replace(old,new,1)
+          p.write_text(patched)
+          Path('patches/ASTR_R13_DELTA_DIVERGENCE_FIX.patch').write_text(''.join(difflib.unified_diff(
+              original.splitlines(True), patched.splitlines(True),
+              fromfile='methodmoment.F90.upstream', tofile='methodmoment.F90.corrected-r13')))
+          report={
+              'model':'current ASTR nonlinear R13 baseline',
+              'change':'dqy(...,3) -> dqz(...,3) in deltacal',
+              'initial_condition':'global equilibrium at rest; lrestar=f',
+              'run_mode':'single uninterrupted process from step 0 to 100000',
+              'purpose':'remove old-checkpoint and wall-memory restart contamination',
+              'important_scope':'This is the fresh baseline, not yet the paper-exact Rana Eq. (5)/(7) implementation.'
+          }
+          Path('audits/fresh_r13_equilibrium_run_plan.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+          PY
+
+      - name: Configure fresh 0-to-100k case
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import json
+          case=Path('fresh_case')
+          inp=next((case/'datin').glob('input.astr*'))
+          lines=inp.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# lrestar'):
+                  lines[i+1]='f'
+                  break
+          else:
+              raise RuntimeError('lrestar entry not found')
+          inp.write_text('\n'.join(lines)+'\n')
+
+          ctrl=case/'datin/controller'
+          lines=ctrl.read_text().splitlines()
+          for i,line in enumerate(lines):
+              if line.strip().startswith('# maxstep,feqchkpt'):
+                  lines[i+1]=f"{100000:9d},   10000,   10000,    1000,    1000,   1000"
+                  break
+          else:
+              raise RuntimeError('controller maxstep entry not found')
+          ctrl.write_text('\n'.join(lines)+'\n')
+
+          audit={
+              'target_step':100000,
+              'restart':False,
+              'continuous_process':True,
+              'grid':'64x64x1 computational plane',
+              'Tref_K':300.0,
+              'Uwall_m_per_s':100.0,
+              'project_Kn':0.05
+          }
+          Path('audits/fresh_case_configuration.json').write_text(json.dumps(audit,indent=2))
+          PY
+          cp -a fresh_case/datin fresh_case/input
+          grep -A2 '# lrestar' fresh_case/datin/input.astr*
+          grep -A2 '# maxstep,feqchkpt' fresh_case/datin/controller
+
+      - name: Build corrected fresh R13 solver
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S astr -B astr/build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
+          cmake --build astr/build -j 2
+          test -x astr/build/bin/astr
+
+      - name: Run fresh corrected R13 from equilibrium to 100k
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p logs summaries comparison
+          INPUT=$(basename "$(find fresh_case/datin -maxdepth 1 -name 'input.astr*' -print -quit)")
+          (cd fresh_case && /usr/bin/time -v mpirun --oversubscribe -np 4 ../astr/build/bin/astr run "datin/${INPUT}" > ../logs/fresh_r13_0_to_100k.log 2> ../logs/fresh_r13_0_to_100k_time.log)
+          ! grep -q 'COMPUTATION CRASHED' logs/fresh_r13_0_to_100k.log
+
+      - name: Validate fresh final state
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import h5py, numpy as np, json
+          path=Path('fresh_case/outdat/flowfield.h5')
+          if not path.exists(): raise FileNotFoundError(path)
+          result={'fields':{}}
+          with h5py.File(path,'r') as h:
+              result['nstep']=int(h['nstep'][0])
+              result['time']=float(h['time'][0])
+              if result['nstep'] != 100000:
+                  raise RuntimeError(f"nstep={result['nstep']}, expected 100000")
+              for key in ['ro','p','t','u1','u2','qx','qy','Rxx','Rxy','Ryy','Delta']:
+                  a=np.asarray(h[key],dtype=float)
+                  if not np.isfinite(a).all(): raise FloatingPointError(key)
+                  result['fields'][key]={'min':float(a.min()),'max':float(a.max()),'rms':float(np.sqrt(np.mean(a*a)))}
+              for key in ['ro','p','t']:
+                  if np.asarray(h[key],dtype=float).min() <= 0:
+                      raise FloatingPointError(f'non-positive {key}')
+          Path('summaries/fresh_r13_100k_validation.json').write_text(json.dumps(result,indent=2))
+          print(json.dumps(result,indent=2))
+          PY
+
+      - name: Build DSMC-channel comparison
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 astr_r26_stage1/compare_r26_r13_dsmc.py \
+            --r26-case fresh_case --r13-case fresh_case --output comparison/fresh_r13_100k
+          cp comparison/fresh_r13_100k/comparison_summary.json summaries/fresh_r13_100k_comparison_summary.json
+
+      - name: Package fresh-equilibrium result
+        if: always()
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ROOT=ASTR_R13_CORRECTED_FRESH_EQUILIBRIUM_0_TO_100K
+          mkdir -p "$ROOT/code"
+          cp -a audits patches logs summaries comparison "$ROOT/" || true
+          cp -a fresh_case "$ROOT/final_case" || true
+          cp -a astr/src "$ROOT/patched_source_src" || true
+          cp -a astr_r26_stage1 "$ROOT/code/" || true
+          zip -r -9 "${ROOT}.zip" "$ROOT"
+          sha256sum "${ROOT}.zip" > "${ROOT}.zip.sha256"
+          test -s "${ROOT}.zip"
+
+      - name: Upload fresh-equilibrium R13 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ASTR_R13_CORRECTED_FRESH_EQUILIBRIUM_0_TO_100K
+          path: |
+            ASTR_R13_CORRECTED_FRESH_EQUILIBRIUM_0_TO_100K.zip
+            ASTR_R13_CORRECTED_FRESH_EQUILIBRIUM_0_TO_100K.zip.sha256
+          compression-level: 0
+          retention-days: 14

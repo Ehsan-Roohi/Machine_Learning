@@ -1,0 +1,1 @@
+Run the corrected current ASTR R13 baseline continuously from global equilibrium at rest to step 100000, without any restart checkpoint, and package the final DSMC-channel diagnostics.
