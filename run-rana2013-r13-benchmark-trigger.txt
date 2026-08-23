@@ -1,0 +1,1 @@
+Audit the complete transformed nonlinear Maxwell R13 equations and exact Rana et al. (2013) wall conditions term by term, then reproduce the paper's physical and mesh benchmark suite from equilibrium.
