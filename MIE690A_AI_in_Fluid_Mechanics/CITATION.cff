@@ -1,11 +1,11 @@
 cff-version: 1.2.0
 message: "If you use these course materials, please cite the associated manuscript and this repository."
-title: "MIE 690A: AI in Fluid Mechanics - Reproducible Jupyter Curriculum Materials"
+title: "MIE 690A: AI in Fluid Mechanics — Complete Reproducible Jupyter Curriculum"
 type: software
 authors:
   - family-names: Roohi
     given-names: Ehsan
     orcid: "https://orcid.org/0000-0001-5739-3210"
 repository-code: "https://github.com/Ehsan-Roohi/Machine_Learning/tree/main/MIE690A_AI_in_Fluid_Mechanics"
-version: "2026.08"
-date-released: "2026-08-22"
+version: "2026.08.23"
+date-released: "2026-08-23"

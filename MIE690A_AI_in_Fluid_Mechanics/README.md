@@ -1,58 +1,93 @@
-# MIE 690A - AI in Fluid Mechanics
+# MIE 690A — AI in Fluid Mechanics
 
-Public computational materials from the six-week graduate course **MIE 690A: AI in Fluid Mechanics**, University of Massachusetts Amherst, Summer 2026.
+Complete, self-study-ready computational materials from the six-week graduate course **MIE 690A: AI in Fluid Mechanics**, University of Massachusetts Amherst, Summer 2026.
 
-The course treats scientific machine learning as an end-to-end computational workflow: generate or audit numerical data, define a physically meaningful learning task, separate development/validation/blind cases, compare against simple non-neural baselines, evaluate physical fidelity, and document failure modes and reproducibility.
+The course treats scientific machine learning as a controlled computational-physics experiment:
 
-## Six final project-track notebooks
+1. generate or audit numerical data;
+2. define a physically meaningful learning problem;
+3. separate development, validation, and blind physical cases;
+4. compare with a transparent non-neural baseline;
+5. evaluate both statistical and physical fidelity; and
+6. retain failure modes, configuration, and machine-readable evidence.
 
-1. `P1_Re_Generalization.ipynb` - Reynolds-number interpolation/extrapolation and failure-boundary analysis.
-2. `P2_Physics_Guided_DNN.ipynb` - physics-guided coordinate DNNs, wall weighting, and divergence-aware diagnostics.
-3. `P3_POD_Study.ipynb` - POD/reduced-order learning, rank sensitivity, modal-coefficient prediction, and structure preservation.
-4. `P4_Uncertainty_Study.ipynb` - uncertainty/data-sufficiency analysis and robustness checks.
-5. `P5_Rarefied_Cavity.ipynb` - rarefied cavity modeling, particle sampling, and kinetic-field validation.
-6. `P6_FP_Cavity_Closure.ipynb` - neural closure acceleration for a Fokker-Planck particle solver and closed-loop fidelity testing.
+Start with [START_HERE.md](START_HERE.md). It gives the installation check, recommended order, expected runtimes, and a first 20-minute validation exercise.
 
-`common/P0_Project_Setup.ipynb` is provided as a shared setup/audit notebook and is not counted as a project track.
+## What is included
 
-## Common physical benchmark
+| Resource | Contents |
+| --- | --- |
+| `lectures/` | Five lecture/guide PDFs covering Weeks 1–6, plus editable LaTeX/PPTX sources where available |
+| `notebooks/week01`–`week04` | Nine guided laboratories: Python, TensorFlow, validated cavity CFD, supervised learning, rarefaction, Maxwellian sampling, DSMC, scalar/field surrogates, and DeepONet |
+| `notebooks/P0`–`P6` | Seven expanded research-project notebooks with conceptual notes, frozen decision gates, physical diagnostics, troubleshooting, deliverables, and further reading |
+| `common/` | Shared CFD, surrogate, POD, kinetic, and QA utilities |
+| `data/` | Fixed 11-case cavity reference dataset and numerical-quality table |
+| `advanced/fp_closure/` | Bounded educational workflow for exact and learned Fokker–Planck closure testing |
+| `references/` | Annotated reading guide and BibTeX database |
+| `qa/` | Release validator for notebook syntax, required assets, and reproducibility anchors |
 
-A major course thread is the lid-driven cavity. Continuum cavity fields are generated with a streamfunction-vorticity finite-difference solver and checked against the classical Ghia et al. benchmark where applicable. The same problem is then revisited through data-driven surrogates, POD/reduced-order representations, particle sampling, DSMC-style modeling, and Fokker-Planck closure acceleration.
+## Learning sequence
 
-## Reproducibility principles
+The recommended path is cumulative:
 
-- Split by complete physical cases, not random grid points, when case-wise generalization is the scientific question.
-- Fit scalers and choose hyperparameters using development/training data only.
-- Freeze model-selection rules before opening blind cases.
-- Compare neural models with transparent baselines such as interpolation or linear coefficient prediction.
-- Report physical diagnostics in addition to aggregate error norms.
-- Negative results and failure modes are valid outcomes when the experimental protocol is clean.
+- **Week 1 — Numerical foundations:** Python/NumPy/TensorFlow fundamentals, finite differences, residuals, and validation of lid-driven-cavity centerlines against Ghia et al.
+- **Week 2 — Supervised learning and model validity:** features, targets, scaling, losses, optimization, case-wise splits, interpolation versus extrapolation, and rarefied-flow nondimensionalization.
+- **Week 3 — Particle and kinetic descriptions:** Maxwellian sampling, macroscopic moments, sampling-error scaling, DSMC algorithmic structure, noisy labels, and averaging.
+- **Week 4 — Surrogates and operator learning:** audited CFD fields, scalar baselines, coordinate DNNs, a restricted DeepONet branch–trunk demonstration, and physical diagnostics.
+- **Weeks 5–6 — Controlled research project:** select one track—including POD, physics-guided learning, uncertainty, rarefied flow, or learned closure—freeze the protocol, open blind cases once, document a failure/tradeoff, and produce a reproducible research summary.
 
-## Repository structure
+The full module-to-evidence mapping is in [COURSE_MAP.md](COURSE_MAP.md).
 
-- `notebooks/` - the six final project-track notebooks.
-- `common/P0_Project_Setup.ipynb` - the shared setup/audit notebook.
-- The first public commit focuses on the six final project notebooks and the shared setup notebook. The helper modules, reference datasets, and Track-6 solver scripts remain in the archived course package while licensing and release packaging are checked; they will be added before the archival paper release.
+## Quick start
 
-## Associated manuscript
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+python qa/validate_course_release.py
+```
 
-A companion manuscript is being prepared under the working title:
+For Google Colab, upload the notebook and the files named in its **Required files** section. Project notebooks also contain a repository bootstrap cell, so they can be launched from this checkout without manually copying `common/` or `data/` files.
 
-**From CFD to Scientific Machine Learning: A Reproducible Jupyter Curriculum for AI in Fluid Mechanics**
+TensorFlow is needed for the neural-network training cells. The numerical audit, interpolation, POD, data checks, and notebook syntax validation can be run without a GPU. Track 6 requires a CUDA-capable runtime for its final closed-loop run; its fast-mode configuration is only a smoke test, not research-resolution evidence.
 
-The manuscript explains the six-week course design, lecture sequence, numerical and ML workflow, physical-validation philosophy, representative student projects, and how the course grew out of the instructor's own research transition into scientific machine learning for computational fluid dynamics.
+## Common benchmark and data contract
+
+The shared dataset contains full `u`, `v`, `p`, `psi`, and `omega` fields on a fixed grid for
+
+`Re = 100, 150, 175, 200, 225, 250, 275, 300, 350, 375, 400`.
+
+The streamfunction–vorticity solver is an educational reference. Re = 100 and 400 include Ghia centerline checks; all cases retain numerical residuals and a zero-mean pressure gauge. A smoother surrogate is not automatically more physically accurate than the CFD labels.
+
+The reference dataset SHA-256 is recorded in `common/reproducibility.txt` and checked by the release validator.
+
+## Rules that apply to every project
+
+- Split complete physical cases when the claim concerns a new Reynolds number, Knudsen number, wall speed, seed, or operating condition.
+- Fit scalers and select models using development data only.
+- Freeze architecture, rank, loss weights, stopping rules, and rejection thresholds before blind testing.
+- Compare neural models with a transparent baseline using the same allowed information.
+- Report local physics diagnostics alongside aggregate error norms.
+- Treat a negative result as valid when the comparison is controlled and reproducible.
+- Do not describe reduced teaching budgets as production convergence evidence.
 
 ## Student work and permissions
 
-Student project results shown in the manuscript are attributed by name and will be included in the final submitted version only after explicit permission is obtained from the students. Student submissions are not included in this public repository.
+This repository contains instructor-developed teaching materials, common numerical assets, and starter notebooks. Student submissions are not included. Any student result reproduced in the associated manuscript remains subject to explicit student permission and attribution.
 
-## License
+## Associated manuscript
 
-Copyright (c) 2026 Ehsan Roohi. Public release for inspection and educational use. A formal code/content license will be selected before the final archival release associated with the paper.
+**From CFD to Scientific Machine Learning: A Reproducible Jupyter Curriculum for AI in Fluid Mechanics**
 
-## Contact
+The manuscript documents the course design, numerical and ML workflow, physical-validation philosophy, representative projects, and adoption guidance for other instructors.
+
+## Citation and contact
+
+Use [CITATION.cff](CITATION.cff) when citing the release.
 
 Ehsan Roohi  
-Mechanical and Industrial Engineering  
+Department of Mechanical and Industrial Engineering  
 University of Massachusetts Amherst  
 roohie@umass.edu
+
+Copyright © 2026 Ehsan Roohi. A formal code/content license will be selected before the final archival release.
