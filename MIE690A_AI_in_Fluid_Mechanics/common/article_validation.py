@@ -238,8 +238,8 @@ def build_dsmc_wall_pressure_validation(
     _style()
     fig, axes = plt.subplots(1, 2, figsize=(15.8, 6.5), gridspec_kw={"width_ratios": (1.22, 0.78)})
     axes[0].fill_between(xc, coarse_mean - coarse_std, coarse_mean + coarse_std, color="#F59E0B", alpha=0.20, label=r"$40^2$: run-to-run $\pm1\sigma$")
-    axes[0].plot(xc, coarse_mean, color="#B45309", ls="--", lw=2.3, label=r"our DSMC, $40^2$ (3-seed mean)")
-    axes[0].plot(xf, yf, color="#1D4ED8", lw=2.8, label=r"our DSMC, $60^2$ (reported)")
+    axes[0].plot(xc, coarse_mean, color="#B45309", ls="--", lw=2.3, label=r"FlowMLLab DSMC, $40^2$ (3-seed mean)")
+    axes[0].plot(xf, yf, color="#1D4ED8", lw=2.8, label=r"FlowMLLab DSMC, $60^2$ (reported)")
     axes[0].scatter(xr, yr, s=47, color="black", edgecolor="white", linewidth=0.65, zorder=5, label="Mohammadzadeh et al. DSMC")
     axes[0].set(title=r"(a) Direct solver validation: $Re=1.5$, $Kn=0.1$, $Ma=0.09$", xlabel=r"wall coordinate $s/L$", ylabel=r"$p/p_0$", xlim=(0, 4), ylim=(0.895, 1.125), xticks=[0, 1, 2, 3, 4], xticklabels=["A", "B", "C", "D", "A"])
     axes[0].legend(loc="best", framealpha=0.97, fontsize=11.2)
@@ -254,7 +254,7 @@ def build_dsmc_wall_pressure_validation(
         for boundary in (1, 2, 3):
             axis.axvline(boundary, color="#94A3B8", ls=":", lw=1.0, zorder=0)
     fig.subplots_adjust(left=0.07, right=0.985, bottom=0.13, top=0.84, wspace=0.22)
-    fig.suptitle("Executed HS--NTC solver versus Mohammadzadeh DSMC wall pressure", y=0.98, fontsize=18, fontweight="bold")
+    fig.suptitle("FlowMLLab HS--NTC solver versus Mohammadzadeh DSMC wall pressure", y=0.98, fontsize=18, fontweight="bold")
     paths = _save(fig, output_dir, "fig10a_mohammadzadeh_validation")
     metrics = {"relative_l2": relative_l2, "rmse_over_p0": rmse, "max_abs_over_p0": maximum, "grid_change_40_to_60": grid_change, "fine_run": "ref_n60_seed07", "coarse_runs": list(coarse_names)}
     (output_dir / "fig10a_mohammadzadeh_validation_metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
