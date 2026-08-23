@@ -5,7 +5,9 @@
 - `week01/`: Python, TensorFlow, and validated continuum cavity CFD.
 - `week02/`: supervised-learning foundations and a rarefied-flow surrogate.
 - `week03/`: Maxwellian sampling/noise and a mini DSMC cavity.
-- `week04/`: CFD data production, scalar/field surrogates, and DeepONet.
+- `week04/`: CFD data production, scalar/field surrogates, and a 27-cell POD-DeepONet laboratory with development-only selection, a visible blind-test gate, three-seed uncertainty, Ghia checks, physical diagnostics, and timing.
+
+The executed Week-4 operator result is stored in `../results/pod_deeponet/`. Start with `week04/W4_Lab3_DeepONet_Cavity_Student.ipynb`; set its regeneration switches only after reading the frozen protocol. The notebook distinguishes the valid advantage—fast repeated full-field inference with retained benchmark fidelity—from the invalid claim that a neural surrogate makes Ghia data more accurate.
 
 ## Research-project notebooks
 
