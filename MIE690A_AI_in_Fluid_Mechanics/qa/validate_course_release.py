@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +29,8 @@ REQUIRED = [
     "common/w4utils.py",
     "common/w5_common.py",
     "common/mini_dsmc.py",
+    "common/run_pod_deeponet_validation.py",
+    "notebooks/week04/W4_Lab3_DeepONet_Cavity_Student.ipynb",
     "notebooks/P0_Project_Setup.ipynb",
     "notebooks/P1_Re_Generalization.ipynb",
     "notebooks/P2_Physics_Guided_DNN.ipynb",
@@ -42,6 +45,13 @@ REQUIRED = [
     "lectures/weeks05_06_project_guide.pdf",
     "references/README.md",
     "references/course_references.bib",
+    "results/pod_deeponet/deeponet_selection.csv",
+    "results/pod_deeponet/README.md",
+    "results/pod_deeponet/deeponet_metrics.csv",
+    "results/pod_deeponet/deeponet_ghia_metrics.csv",
+    "results/pod_deeponet/deeponet_protocol_and_timing.json",
+    "results/pod_deeponet/deeponet_predictions.csv",
+    "results/pod_deeponet/pod_deeponet_ghia_validation.svg",
 ]
 
 
@@ -110,6 +120,56 @@ def smoke_common_baseline() -> dict[str, float]:
     return {key: float(value) for key, value in report.items()}
 
 
+def validate_pod_deeponet_results() -> dict[str, float]:
+    result_dir = ROOT / "results" / "pod_deeponet"
+    metrics = pd.read_csv(result_dir / "deeponet_metrics.csv")
+    ensemble = metrics[metrics["method"] == "three-seed POD-DeepONet ensemble"].copy()
+    assert sorted(ensemble["Re"].astype(int).tolist()) == [175, 275, 375]
+    assert float(ensemble["relative_L2_uv"].max()) < 0.005
+    assert float(ensemble["div_l2_pred"].max()) < 1.0e-12
+    assert float(ensemble["wall_rms_error"].max()) == 0.0
+
+    ghia = pd.read_csv(result_dir / "deeponet_ghia_metrics.csv")
+    assert sorted(ghia["Re"].astype(int).tolist()) == [100, 400]
+    ghia_delta = np.max(
+        np.abs(
+            ghia[["POD_DeepONet_Ghia_Eu", "POD_DeepONet_Ghia_Ev"]].to_numpy()
+            - ghia[["CFD_Ghia_Eu", "CFD_Ghia_Ev"]].to_numpy()
+        )
+    )
+    assert float(ghia_delta) < 5.0e-4
+
+    timing = json.loads(
+        (result_dir / "deeponet_protocol_and_timing.json").read_text(encoding="utf-8")
+    )
+    assert timing["selected_rank"] == 3
+    assert timing["selected_hidden"] == [32, 32]
+    assert float(timing["speedup"]) > 100.0
+    assert float(timing["CFD_final_residual"]) < 1.0e-6
+
+    predictions = pd.read_csv(result_dir / "deeponet_predictions.csv")
+    field_columns = [
+        "u_Re175", "v_Re175", "u_Re275", "v_Re275", "u_Re375", "v_Re375"
+    ]
+    assert len(predictions) == 65 * 65
+    assert predictions[["iy", "ix"]].drop_duplicates().shape[0] == 65 * 65
+    assert predictions[["x", "y", *field_columns]].notna().all().all()
+
+    binary_predictions = result_dir / "deeponet_predictions.npz"
+    if binary_predictions.is_file():
+        with np.load(binary_predictions, allow_pickle=False) as archive:
+            assert archive["u"].shape == (3, 65, 65)
+            assert archive["v"].shape == (3, 65, 65)
+            assert archive["seeds"].tolist() == [690, 691, 692]
+
+    return {
+        "max_blind_relative_L2_uv": float(ensemble["relative_L2_uv"].max()),
+        "max_divergence_L2": float(ensemble["div_l2_pred"].max()),
+        "max_Ghia_error_change": float(ghia_delta),
+        "measured_speedup": float(timing["speedup"]),
+    }
+
+
 def validate_pdfs() -> int:
     pdfs = sorted((ROOT / "lectures").glob("*.pdf"))
     assert len(pdfs) == 5
@@ -128,6 +188,7 @@ def main() -> None:
     assert actual == EXPECTED_DATA_SHA256, (actual, EXPECTED_DATA_SHA256)
     notebooks, code_cells = validate_notebooks()
     metrics = smoke_common_baseline()
+    deeponet_metrics = validate_pod_deeponet_results()
     pdfs = validate_pdfs()
     python_files = sorted(ROOT.rglob("*.py"))
     for path in python_files:
@@ -139,6 +200,7 @@ def main() -> None:
     print("Python files parsed:", len(python_files))
     print("dataset SHA-256:", actual)
     print("Re=275 interpolation metrics:", json.dumps(metrics, sort_keys=True))
+    print("POD-DeepONet release metrics:", json.dumps(deeponet_metrics, sort_keys=True))
 
 
 if __name__ == "__main__":
