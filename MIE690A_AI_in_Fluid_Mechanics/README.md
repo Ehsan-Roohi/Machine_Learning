@@ -1,6 +1,8 @@
-# MIE 690A — AI in Fluid Mechanics
+# FlowMLLab
 
-Complete, self-study-ready computational materials from the six-week graduate course **MIE 690A: AI in Fluid Mechanics**, University of Massachusetts Amherst, Summer 2026.
+**FlowMLLab** is an open-source framework for reproducible CFD-to-scientific-machine-learning experiments. It integrates transparent continuum and particle solvers, case-wise data partitions, non-neural baselines, coordinate networks, POD-DeepONet models, physical diagnostics, machine-readable evidence, and release checks.
+
+The repository also contains the complete tutorial and lecture layer developed for the six-week graduate course **MIE 690A: AI in Fluid Mechanics**, University of Massachusetts Amherst, Summer 2026. The reusable modules, datasets, validators, and figure builders are the software core; the notebooks are documented examples of that framework.
 
 The course treats scientific machine learning as a controlled computational-physics experiment:
 
@@ -30,7 +32,7 @@ Start with [START_HERE.md](START_HERE.md). It gives the installation check, reco
 | `references/` | Annotated reading guide and BibTeX database |
 | `qa/` | Release validator for notebook syntax, required assets, and reproducibility anchors |
 
-## Learning sequence
+## Tutorial and example sequence
 
 The recommended path is cumulative:
 
@@ -91,9 +93,9 @@ This repository contains instructor-developed teaching materials, common numeric
 
 ## Associated manuscript
 
-**From CFD to Scientific Machine Learning: A Reproducible Jupyter Curriculum for AI in Fluid Mechanics**
+**FlowMLLab: An Open-Source Framework for Reproducible CFD-to-Scientific-Machine-Learning Experiments**
 
-The manuscript documents the course design, numerical and ML workflow, physical-validation philosophy, representative projects, and adoption guidance for other instructors.
+The SoftwareX manuscript documents the software architecture, numerical and ML workflow, validation contract, representative continuum and kinetic applications, limitations, and reuse pathway.
 
 ## Citation and contact
 
