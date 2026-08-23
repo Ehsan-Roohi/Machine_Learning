@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Release gate for the public MIE 690A course tree."""
+"""Release gate for the public FlowMLLab software and tutorial tree."""
 
 from __future__ import annotations
 
@@ -24,6 +24,12 @@ REQUIRED = [
     "COURSE_MAP.md",
     "requirements.txt",
     "CITATION.cff",
+    "LICENSE",
+    "pyproject.toml",
+    "flowmllab/__init__.py",
+    "flowmllab/cli.py",
+    "flowmllab/core.py",
+    "tests/test_core.py",
     "data/cavity_data.npz",
     "data/case_quality.csv",
     "common/w4utils.py",
@@ -252,7 +258,7 @@ def main() -> None:
     for path in python_files:
         ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
-    print("MIE690A_RELEASE_QA_PASS")
+    print("FLOWMLLAB_RELEASE_QA_PASS")
     print("notebooks:", notebooks, "code cells parsed:", code_cells)
     print("lecture PDFs:", pdfs)
     print("Python files parsed:", len(python_files))
