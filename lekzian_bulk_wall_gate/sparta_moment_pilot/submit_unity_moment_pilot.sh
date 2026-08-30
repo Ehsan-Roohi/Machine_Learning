@@ -72,11 +72,12 @@ REPO_URL="${REPO_URL:-https://github.com/Ehsan-Roohi/Machine_Learning.git}"
 GIT_REF="${GIT_REF:-agent/lekzian-gate-test}"
 CODE_DIR="${WORK_DIR}/Machine_Learning"
 PILOT_MODE="${PILOT_MODE:-smoke}"
+KN_VALUES="${KN_VALUES:-}"
 PYTHON_BIN="${PYTHON_BIN:-/work/pi_roohie_umass_edu/roohie_umass_edu/.conda/envs/dsmc-gpu/bin/python}"
 ARRAY_MAX_PARALLEL="${ARRAY_MAX_PARALLEL:-2}"
 
-if [[ "${PILOT_MODE}" != "smoke" && "${PILOT_MODE}" != "production" ]]; then
-  echo "ERROR: PILOT_MODE must be smoke or production" >&2
+if [[ "${PILOT_MODE}" != "smoke" && "${PILOT_MODE}" != "production" && "${PILOT_MODE}" != "interpolation" ]]; then
+  echo "ERROR: PILOT_MODE must be smoke, production, or interpolation" >&2
   exit 2
 fi
 if [[ ! -x "${PYTHON_BIN}" ]]; then
@@ -115,7 +116,16 @@ if [[ -e "${RUN_ROOT}/manifest.json" && "${FORCE_REGENERATE:-0}" != "1" ]]; then
   exit 2
 fi
 
-generate_args=(--output "${RUN_ROOT}" --mode "${PILOT_MODE}")
+generator_mode="${PILOT_MODE}"
+if [[ "${PILOT_MODE}" == "interpolation" ]]; then
+  generator_mode=production
+  KN_VALUES="${KN_VALUES:-0.2 0.4}"
+fi
+generate_args=(--output "${RUN_ROOT}" --mode "${generator_mode}")
+if [[ -n "${KN_VALUES}" ]]; then
+  read -r -a kn_args <<< "${KN_VALUES}"
+  generate_args+=(--kn-values "${kn_args[@]}")
+fi
 if [[ "${FORCE_REGENERATE:-0}" == "1" ]]; then
   generate_args+=(--force)
 fi
@@ -126,8 +136,8 @@ if [[ "${PILOT_MODE}" == "smoke" && "${case_count}" -ne 1 ]]; then
   echo "ERROR: smoke manifest must contain one case" >&2
   exit 3
 fi
-if [[ "${PILOT_MODE}" == "production" && "${case_count}" -ne 6 ]]; then
-  echo "ERROR: production manifest must contain six cases" >&2
+if [[ ( "${PILOT_MODE}" == "production" || "${PILOT_MODE}" == "interpolation" ) && "${case_count}" -ne 6 ]]; then
+  echo "ERROR: ${PILOT_MODE} manifest must contain six cases" >&2
   exit 3
 fi
 
