@@ -12,6 +12,12 @@ if [[ "${LEKZIAN_SPARTA_FINALIZE:-0}" == "1" ]]; then
 fi
 
 if [[ "${LEKZIAN_SPARTA_WORKER:-0}" == "1" ]]; then
+  # The canonical JFM SPARTA binary was built against Unity Open MPI 5.0.3.
+  # Load that ABI before invoking the binary; do not rewrite HOME or other
+  # account-level variables to work around MPI initialization errors.
+  if [[ "${MPI_MODULE:-openmpi/5.0.3}" != "none" ]]; then
+    module load "${MPI_MODULE:-openmpi/5.0.3}"
+  fi
   if [[ -n "${SPARTA_MODULE:-}" ]]; then
     module load "${SPARTA_MODULE}"
   fi
@@ -40,11 +46,19 @@ if [[ "${LEKZIAN_SPARTA_WORKER:-0}" == "1" ]]; then
 
   echo "Running ${case_id}"
   echo "SPARTA_BIN=${SPARTA_BIN}"
-  echo "SLURM_CPUS_PER_TASK=${SLURM_CPUS_PER_TASK:-1}"
+  echo "MPI_MODULE=${MPI_MODULE:-openmpi/5.0.3}"
+  echo "SLURM_NTASKS=${SLURM_NTASKS:-1}"
   bin_name="$(basename "${SPARTA_BIN}")"
-  if [[ "${SPARTA_MPI:-auto}" == "1" || ( "${SPARTA_MPI:-auto}" == "auto" && "${bin_name}" =~ (mpi|_kk) ) ]]; then
-    srun --ntasks="${SLURM_CPUS_PER_TASK:-1}" "${SPARTA_BIN}" -in in.moment_pilot
+  mpi_mode="${SPARTA_MPI:-auto}"
+  if [[ "${mpi_mode}" == "auto" ]]; then
+    if [[ "${bin_name}" =~ (mpi|_kk) ]]; then mpi_mode=1; else mpi_mode=0; fi
+  fi
+  if [[ "${mpi_mode}" == "1" && "${SLURM_NTASKS:-1}" -gt 1 ]]; then
+    # Match the known-good JFM production launcher.
+    mpirun -np "${SLURM_NTASKS}" "${SPARTA_BIN}" -in in.moment_pilot
   else
+    # A one-rank MPI binary is a valid singleton.  The known-good JFM smoke
+    # test used direct execution, avoiding Slurm's MPI plugin entirely.
     "${SPARTA_BIN}" -in in.moment_pilot
   fi
 
@@ -120,9 +134,11 @@ fi
 export LEKZIAN_SPARTA_WORKER=1 RUN_ROOT CASE_LIST VALIDATOR PACKER PYTHON_BIN
 array_end="$((case_count - 1))"
 if [[ "${PILOT_MODE}" == "smoke" ]]; then
-  resources=(--cpus-per-task=1 --mem=4G --time=00:20:00 --array=0)
+  resources=(--ntasks=1 --cpus-per-task=1 --mem=4G --time=00:20:00 --array=0)
+  pack_mem=4G
 else
-  resources=(--cpus-per-task=26 --mem=120G --time=24:00:00 --array="0-${array_end}%${ARRAY_MAX_PARALLEL}")
+  resources=(--ntasks=26 --cpus-per-task=1 --mem=120G --time=24:00:00 --array="0-${array_end}%${ARRAY_MAX_PARALLEL}")
+  pack_mem=32G
 fi
 
 submit_output="$(sbatch --parsable \
@@ -138,7 +154,7 @@ job_id="${submit_output%%;*}"
 finalize_output="$(sbatch --parsable \
   --job-name="lekz_${PILOT_MODE}_pack" \
   --partition="${SLURM_PARTITION:-cpu}" \
-  --cpus-per-task=2 --mem=32G --time=01:00:00 \
+  --ntasks=1 --cpus-per-task=2 --mem="${pack_mem}" --time=01:00:00 \
   --dependency="afterok:${job_id}" \
   --output="${WORK_DIR}/logs/${PILOT_MODE}_pack_%j.out" \
   --error="${WORK_DIR}/logs/${PILOT_MODE}_pack_%j.err" \

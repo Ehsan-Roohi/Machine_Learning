@@ -62,23 +62,25 @@ PILOT_MODE=smoke bash submit_unity_moment_pilot.sh
 If it is not on `PATH`, provide its absolute path (and a module if needed):
 
 ```bash
-SPARTA_MODULE=sparta SPARTA_BIN=/absolute/path/to/spa_mpi \
+MPI_MODULE=openmpi/5.0.3 SPARTA_BIN=/absolute/path/to/spa_mpi \
 PILOT_MODE=smoke bash submit_unity_moment_pilot.sh
 ```
 
 After the smoke job ends with `PASS ISO_Ma6_Kn0p1`, submit all six cases:
 
 ```bash
-SPARTA_BIN=/absolute/path/to/spa_mpi PILOT_MODE=production \
+MPI_MODULE=openmpi/5.0.3 SPARTA_BIN=/absolute/path/to/spa_mpi PILOT_MODE=production \
 ARRAY_MAX_PARALLEL=2 bash submit_unity_moment_pilot.sh
 ```
 
 The launcher defaults to
 `/project/pi_roohie_umass_edu/Combustion/LEKZIAN_SPARTA_MOMENT_PILOT`, uses
-26 CPU tasks and 120 GB per production case, and runs at most two cases at a
-time.  Override `WORK_DIR`, `SLURM_PARTITION`, or other environment variables
-when needed.  It refuses to overwrite an existing run.  `FORCE_REGENERATE=1`
-is intentionally required to discard and regenerate it.
+26 MPI tasks and 120 GB per production case, and runs at most two cases at a
+time.  It loads Unity `openmpi/5.0.3`, executes a one-rank smoke test directly,
+and uses `mpirun` for production to match the known-good JFM SPARTA build.
+Override `WORK_DIR`, `SLURM_PARTITION`, or other environment variables when
+needed.  It refuses to overwrite an existing run.  `FORCE_REGENERATE=1` is
+intentionally required to discard and regenerate it.
 
 To generate locally without Slurm:
 
