@@ -1,0 +1,15 @@
+{
+  "verdict": "FAIL",
+  "checks": {
+    "relative_gain_at_least_20_percent": false,
+    "bootstrap_ci_excludes_zero": false,
+    "gain_exceeds_block_uncertainty": false,
+    "aligned_beats_shuffled": true,
+    "gain_positive_for_every_held_geometry": false
+  },
+  "geometry_shear_gain_percent": {
+    "BWD": -2.0058184783546804,
+    "FWD": 8.21957503291395,
+    "ISO": -4.864842652946852
+  }
+}
