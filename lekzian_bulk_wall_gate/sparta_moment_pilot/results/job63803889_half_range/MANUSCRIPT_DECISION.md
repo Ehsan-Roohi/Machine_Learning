@@ -14,7 +14,9 @@ moment insufficiency and incident half-range sufficiency.
 - For signed Cf the corresponding errors are 26.37%, 35.66%, 43.38%, and
   45.76%.  Full-range stress and heat-flux moments do not provide a robust
   cross-Kn closure for shear.
-- S3 uses incident pre-collision velocities plus the known 300 K diffuse-wall
+- The distribution-level closure is denoted `S_HR`, rather than `S3`, because it
+  uses the incident half-range distribution rather than merely adding a third
+  finite set of moments. It uses pre-collision velocities plus the known 300 K diffuse-wall
   kernel.  Across ISO, BWD, and FWD, its concurrent Cp NRMSE is 0.15--0.28%
   and signed-Cf NRMSE is 1.30--7.35%.  The pre/post impulse control gives
   approximately 0.056% Cp error in every case, validating surface IDs,
@@ -22,7 +24,7 @@ moment insufficiency and incident half-range sufficiency.
 - Against a separate 40,000-step wall reference, BWD remains accurate.  FWD
   signed-Cf differences are 16.65--25.09%, but the independent DSMC block SEM
   is already 13.93--20.70%; this is a precision limitation, not evidence that
-  the concurrent S3 identity failed.
+  the concurrent `S_HR` identity failed.
 - A constructive velocity-space example supplies two non-negative
   distributions with every full-range monomial moment through degree three
   identical to machine precision, while incident pressure and shear differ.
@@ -35,13 +37,13 @@ The redesign directly removes the three weaknesses identified by the referee:
 1. The model-dependent information horizon is no longer the principal claim.
 2. Parameter, S0, S1, and S2 use the same model class, width, seeds, training
    budget, and padded input dimension in a blind intermediate-Kn test.
-3. Absolute wall-load accuracy is reported and S3 is validated against the
+3. Absolute wall-load accuracy is reported and `S_HR` is validated against the
    direct DSMC impulse control, not against a full-domain neural reference.
 
 The likely new referee objection is that wall flux being a half-range kinetic
 functional is known.  Novelty must therefore rest on the combination of a
 fair blind hierarchy, corrected overhang geometry, cross-geometry quantitative
-gates, and a constructive non-uniqueness result—not on S3 accuracy alone.
+gates, and a constructive non-uniqueness result—not on `S_HR` accuracy alone.
 
 ## Remaining run
 
@@ -54,6 +56,6 @@ The submission gate is:
 
 - independent-window Cp NRMSE below 3%;
 - independent-window signed-Cf NRMSE below 15%, or a difference statistically
-  indistinguishable from zero using the combined DSMC/S3 block uncertainty;
+  indistinguishable from zero using the combined DSMC/`S_HR` block uncertainty;
 - full pre/post Cp control below 0.2%;
 - corrected gas-facing surface normals retained.

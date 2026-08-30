@@ -102,7 +102,9 @@ python /path/to/pack_outputs.py /path/to/pilot
 - Use the collision tally only as a half-range diagnostic upper bound.
 - The completed blind gate found that `Pij` improves Cp relative to primitives
   but worsens signed Cf; do not describe S1/S2 as a successful transferable
-  wall closure.  S3 remains a diagnostic/oracle unless an operational
+  wall closure.  The distribution-level model is denoted `S_HR` (incident
+  half-range reconstruction), not `S3`, because it is qualitatively different
+  from adding another finite moment set. `S_HR` remains a diagnostic/oracle unless an operational
   distribution model supplies the incident half range away from the wall.
 
 ## Post-run moment-sufficiency gate

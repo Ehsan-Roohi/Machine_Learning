@@ -17,9 +17,20 @@ from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize, TwoSlopeNorm
 import numpy as np
 from scipy.stats import t as student_t
+from scipy.signal import savgol_filter
 
 K_B = 1.380649e-23
 M_AR = 6.6335209e-26
+HALF_RANGE_LABEL = r"Half-range reconstruction, $S_{\mathrm{HR}}$"
+
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.serif": ["Times New Roman", "Nimbus Roman", "Times"],
+    "mathtext.fontset": "stix",
+    "axes.linewidth": 0.8,
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+})
 
 
 def snapshots(path: Path, ncol: int):
@@ -239,7 +250,7 @@ def _surface_collection(case: dict, values: np.ndarray, norm, cmap: str) -> Line
 
 
 def plot_physical(cases, out: Path, quantity: str, independent: bool = False):
-    """Plot DSMC and S3 directly on each wall plus the physical profile."""
+    """Plot DSMC and half-range reconstruction on each wall and profile."""
     j = {"cp": 0, "cf": 1}[quantity]
     label = {"cp": r"$C_p=(p_w-p_\infty)/(\frac{1}{2}\rho_\infty U_\infty^2)$",
              "cf": r"$C_f=\tau_w/(\frac{1}{2}\rho_\infty U_\infty^2)$"}[quantity]
@@ -282,7 +293,7 @@ def plot_physical(cases, out: Path, quantity: str, independent: bool = False):
         ax_profile.fill_between(case["s"], truth-ci, truth+ci, color="0.78",
                                 alpha=.55, linewidth=0, label="DSMC 95% CI")
         ax_profile.plot(case["s"], incident, "s-", color="#2f74b5", ms=2.8,
-                        lw=1.8, label=r"$S_3$ incident", zorder=3)
+                        lw=1.8, label=HALF_RANGE_LABEL, zorder=3)
         ax_profile.plot(case["s"], truth, "o", color="black", mfc="white",
                         mew=.9, ms=3.2, label="DSMC", zorder=4)
         ax_profile.axvline(case["apex_s"], color="0.42", ls=":", lw=1.1)
@@ -302,17 +313,17 @@ def plot_physical(cases, out: Path, quantity: str, independent: bool = False):
             f"NRMSE={100*error:.2f}%\n$r={correlation:.4f}$")
 
     axes[0, 0].set_title("DSMC surface tally", fontsize=12, weight="bold", pad=12)
-    axes[0, 1].set_title(r"$S_3$: incident half-range reconstruction",
+    axes[0, 1].set_title(r"Half-range reconstruction, $S_{\mathrm{HR}}$",
                          fontsize=12, weight="bold", pad=12)
     axes[0, 2].set_title("Physical wall profile", fontsize=12, weight="bold", pad=12)
     handles, labels = axes[0, 2].get_legend_handles_labels()
     order = [labels.index("DSMC 95% CI"), labels.index("DSMC"),
-             labels.index(r"$S_3$ incident")]
+             labels.index(HALF_RANGE_LABEL)]
     fig.legend([handles[i] for i in order], [labels[i] for i in order],
                loc="upper center", bbox_to_anchor=(0.72, 0.965),
                ncol=3, frameon=False, fontsize=10)
     source = "independent 40,000-step DSMC reference" if independent else "concurrent five-block DSMC target"
-    fig.suptitle(f"{label}: DSMC versus incident half-range recovery\n({source})",
+    fig.suptitle(f"{label}: DSMC versus half-range reconstruction\n({source})",
                  y=0.997, fontsize=14, weight="bold")
     fig.subplots_adjust(left=.15, right=.91, top=.91, bottom=.055, hspace=.58, wspace=.34)
     for ax, case in zip(axes[:, 0], shown):
@@ -326,6 +337,190 @@ def plot_physical(cases, out: Path, quantity: str, independent: bool = False):
     for ext in ("png", "pdf", "svg"):
         fig.savefig(out/f"{stem}.{ext}", dpi=300, bbox_inches="tight")
     plt.close(fig)
+
+
+def _quantity_style(quantity: str):
+    j = {"cp": 0, "cf": 1}[quantity]
+    label = {
+        "cp": r"$C_p=(p_w-p_\infty)/(\frac{1}{2}\rho_\infty U_\infty^2)$",
+        "cf": r"$C_f=\tau_w/(\frac{1}{2}\rho_\infty U_\infty^2)$",
+    }[quantity]
+    return j, label
+
+
+def _save_article_figure(fig, out: Path, stem: str) -> None:
+    for ext in ("png", "pdf", "svg"):
+        destination = out/f"{stem}.{ext}"
+        temporary = out/f"{stem}.{ext}.tmp"
+        fig.savefig(temporary, format=ext, dpi=400, bbox_inches="tight",
+                    facecolor="white")
+        temporary.replace(destination)
+    plt.close(fig)
+
+
+def _facewise_display_smooth(values: np.ndarray) -> np.ndarray:
+    """Smooth each 30-element face only; never smooth across the apex jump."""
+    values = np.asarray(values, dtype=float)
+    smoothed = values.copy()
+    for face in (slice(0, 30), slice(30, 60)):
+        smoothed[face] = savgol_filter(values[face], 7, 2, mode="interp")
+    return smoothed
+
+
+def plot_paper_profiles(cases, out: Path, quantity: str,
+                        independent: bool = False) -> None:
+    """Publication landscape: six physical wall profiles in a 2-by-3 grid."""
+    j, label = _quantity_style(quantity)
+    target_key = "reference" if independent else "target"
+    sem_key = "reference_sem" if independent else None
+    shown = [case for case in cases if not independent or "reference" in case]
+    if not shown:
+        return
+    by_geometry = {
+        geometry: sorted((case for case in shown if case["geometry"] == geometry),
+                         key=lambda case: case["kn"])
+        for geometry in ("ISO", "BWD", "FWD")
+    }
+    if any(len(group) != 2 for group in by_geometry.values()):
+        return
+
+    fig, axes = plt.subplots(2, 3, figsize=(14.8, 6.15), sharey=True,
+                             constrained_layout=False)
+    for col, geometry in enumerate(("ISO", "BWD", "FWD")):
+        for row, case in enumerate(by_geometry[geometry]):
+            ax = axes[row, col]
+            truth = (case[target_key][:, j] if independent
+                     else case["mean"][target_key][:, j])
+            sem = (case[sem_key][:, j] if independent
+                   else case["sem"][target_key][:, j])
+            critical = case["reference_t95"] if independent else case["t95"]
+            reconstruction = case["mean"]["incident"][:, j]
+            truth_display = _facewise_display_smooth(truth)
+            reconstruction_display = _facewise_display_smooth(reconstruction)
+            ci = critical*sem
+            ax.axvspan(0.0, case["apex_s"], color="#f3ead8", alpha=.55,
+                       zorder=0)
+            ax.axvspan(case["apex_s"], 1.0, color="#e8eef5", alpha=.55,
+                       zorder=0)
+            ax.fill_between(case["s"], truth-ci, truth+ci, color="0.70",
+                            alpha=.30, linewidth=0, label="DSMC 95% CI")
+            ax.plot(case["s"], reconstruction_display, color="#1874b4",
+                    lw=2.0, label=HALF_RANGE_LABEL, zorder=3)
+            ax.plot(case["s"], reconstruction, ls="none", marker="s",
+                    color="#1874b4", ms=3.0, markevery=2, zorder=4)
+            ax.plot(case["s"], truth_display, color="black", lw=1.25,
+                    label="DSMC", zorder=4)
+            ax.plot(case["s"], truth, ls="none", marker="o", color="black",
+                    mfc="white", mec="black", mew=.8, ms=3.1,
+                    markevery=2, zorder=5)
+            ax.axvline(case["apex_s"], color="0.35", ls=":", lw=1.1)
+            ax.axhline(0, color="0.55", lw=.7)
+            ax.grid(color="0.82", lw=.6, alpha=.55)
+            ax.set_xlim(0, 1)
+            metric = case["metrics"][quantity]
+            error_key = ("independent_incident_nrmse" if independent
+                         else "incident_nrmse")
+            corr_key = ("independent_incident_correlation" if independent
+                        else "incident_correlation")
+            ax.set_title(fr"{geometry}, $Kn={case['kn']:g}$", fontsize=12,
+                         weight="bold", pad=6)
+            panel = row*3 + col
+            ax.text(.025, .95, f"({chr(97+panel)})", transform=ax.transAxes,
+                    ha="left", va="top", fontsize=11, weight="bold")
+            ax.text(.975, .95,
+                    fr"NRMSE = {100*metric[error_key]:.2f}%" + "\n"
+                    + fr"$r = {metric[corr_key]:.4f}$",
+                    transform=ax.transAxes, ha="right", va="top",
+                    fontsize=9.5,
+                    bbox=dict(facecolor="white", edgecolor="0.78",
+                              boxstyle="round,pad=0.24", alpha=.92))
+
+    handles, legend_labels = axes[0, 0].get_legend_handles_labels()
+    order = [legend_labels.index("DSMC"), legend_labels.index(HALF_RANGE_LABEL),
+             legend_labels.index("DSMC 95% CI")]
+    fig.legend([handles[i] for i in order], [legend_labels[i] for i in order],
+               loc="upper center", bbox_to_anchor=(.5, .985), ncol=3,
+               frameon=False, fontsize=11, columnspacing=2.0)
+    fig.supylabel(label, fontsize=12, x=.018)
+    fig.supxlabel(r"Physical wall arclength, $s/L_w$", fontsize=12, y=.018)
+    source = ("independent 40,000-step DSMC reference" if independent
+              else "co-temporal block-averaged DSMC reference")
+    fig.text(.995, .012, source, ha="right", va="bottom", fontsize=8.5,
+             color="0.35")
+    fig.text(.005, .012,
+             "Markers: raw binned values; lines: facewise display smoothing; metrics use unsmoothed data",
+             ha="left", va="bottom", fontsize=8.0, color="0.35")
+    fig.subplots_adjust(left=.075, right=.99, bottom=.11, top=.88,
+                        wspace=.12, hspace=.28)
+    stem = f"paper_{quantity}_profiles_{'independent' if independent else 'concurrent'}_landscape"
+    _save_article_figure(fig, out, stem)
+
+
+def plot_paper_surface_maps(cases, out: Path, quantity: str) -> None:
+    """Publication landscape: DSMC and half-range values on physical walls."""
+    j, label = _quantity_style(quantity)
+    by_geometry = {
+        geometry: sorted((case for case in cases if case["geometry"] == geometry),
+                         key=lambda case: case["kn"])
+        for geometry in ("ISO", "BWD", "FWD")
+    }
+    if any(len(group) != 2 for group in by_geometry.values()):
+        return
+    ordered = [case for geometry in ("ISO", "BWD", "FWD")
+               for case in by_geometry[geometry]]
+    values = np.concatenate([
+        np.r_[case["mean"]["target"][:, j], case["mean"]["incident"][:, j]]
+        for case in ordered])
+    if quantity == "cf" and values.min() < 0 < values.max():
+        bound = float(np.max(np.abs(values)))
+        norm, cmap = TwoSlopeNorm(vmin=-bound, vcenter=0, vmax=bound), "coolwarm"
+    else:
+        lo, hi = float(values.min()), float(values.max())
+        norm, cmap = Normalize(lo, hi), "viridis"
+
+    fig, axes = plt.subplots(2, 6, figsize=(15.5, 4.35), squeeze=False)
+    for group_col, geometry in enumerate(("ISO", "BWD", "FWD")):
+        for row, case in enumerate(by_geometry[geometry]):
+            for offset, (key, title) in enumerate((
+                    ("target", "DSMC"),
+                    ("incident", r"$S_{\mathrm{HR}}$"))):
+                col = 2*group_col+offset
+                ax = axes[row, col]
+                polygon = np.vstack((case["v1"][0], case["v2"][:30][-1],
+                                     case["v2"][-1]))
+                polygon = (polygon-np.array([0.22, 0.0]))/0.03
+                ax.fill(polygon[:, 0], polygon[:, 1], color="0.92", zorder=0)
+                ax.add_collection(_surface_collection(case, case["mean"][key][:, j],
+                                                      norm, cmap))
+                ax.set_xlim(-.42, 1.10)
+                ax.set_ylim(-.08, 1.08)
+                ax.set_aspect("equal", adjustable="box")
+                ax.grid(color="0.85", lw=.5, alpha=.45)
+                ax.set_title(fr"{geometry}, $Kn={case['kn']:g}$: {title}",
+                             fontsize=9.6, weight="bold", pad=5)
+                panel = row*6+col
+                ax.text(.02, .98, f"({chr(97+panel)})", transform=ax.transAxes,
+                        ha="left", va="top", fontsize=9.5, weight="bold")
+                if row == 1:
+                    ax.set_xlabel(r"$(x-0.22)/h_p$", fontsize=9)
+                else:
+                    ax.set_xticklabels([])
+                if col == 0:
+                    ax.set_ylabel(r"$y/h_p$", fontsize=9)
+                else:
+                    ax.set_yticklabels([])
+    fig.subplots_adjust(left=.045, right=.925, bottom=.135, top=.91,
+                        wspace=.12, hspace=.10)
+    colorbar = fig.colorbar(
+        _surface_collection(ordered[0], ordered[0]["mean"]["incident"][:, j],
+                            norm, cmap),
+        ax=axes, location="right", fraction=.022, pad=.018)
+    colorbar.set_label(label, fontsize=11)
+    fig.text(.5, .025,
+             r"Physical protrusion coordinates; $S_{\mathrm{HR}}$ uses the incoming molecular distribution",
+             ha="center", va="bottom", fontsize=10)
+    _save_article_figure(fig, out,
+                         f"paper_{quantity}_surface_maps_concurrent_landscape")
 
 
 def main():
@@ -371,6 +566,12 @@ def main():
     plot_physical(cases, args.output, "cf")
     plot_physical(cases, args.output, "cp", independent=True)
     plot_physical(cases, args.output, "cf", independent=True)
+    plot_paper_profiles(cases, args.output, "cp")
+    plot_paper_profiles(cases, args.output, "cf")
+    plot_paper_profiles(cases, args.output, "cp", independent=True)
+    plot_paper_profiles(cases, args.output, "cf", independent=True)
+    plot_paper_surface_maps(cases, args.output, "cp")
+    plot_paper_surface_maps(cases, args.output, "cf")
     fields = ["case_id", "geometry", "kn", "surface_id", "s_over_Lw", "x_m", "y_m", "records",
               "cp_dsmc", "cp_dsmc_sem", "cp_s3", "cp_full_control",
               "cf_dsmc", "cf_dsmc_sem", "cf_s3", "cf_full_control",
@@ -401,14 +602,14 @@ def main():
             "s", "midpoint", "v1", "v2", "ids", "mean", "sem", "counts",
             "reference", "reference_sem", "reference_t95")})
     (args.output/"half_range_long_metrics.json").write_text(json.dumps(serial, indent=2)+"\n")
-    lines = ["# Cross-geometry incident half-range gate", "",
-             "S3 uses pre-collision molecular velocities and the known 300 K diffuse-wall kernel. ",
+    lines = ["# Cross-geometry half-range reconstruction gate", "",
+             "The distribution-level model is denoted S_HR, not S3: it uses pre-collision molecular velocities and the known 300 K diffuse-wall kernel. ",
              "The full-impulse control alone uses post-collision velocity. Surface-normal orientation is inferred ",
              "elementwise from incident velocities, which is required for the overhanging FWD/BWD faces.", ""]
     for c in serial:
         lines += [f"## {c['case_id']}", "",
                   f"Records used: {c['used_records']:,}; minimum per element: {c['minimum_element_records']:,}.", "",
-                  "| Quantity | Concurrent S3 NRMSE | r | Full-impulse control | DSMC RMS SEM | Independent S3 NRMSE | Independent DSMC SEM |",
+                  "| Quantity | Concurrent S_HR NRMSE | r | Full-impulse control | DSMC RMS SEM | Independent S_HR NRMSE | Independent DSMC SEM |",
                   "|---|---:|---:|---:|---:|---:|---:|"]
         for q in ("cp","cf","cq"):
             m=c["metrics"][q]

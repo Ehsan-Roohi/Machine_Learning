@@ -20,6 +20,14 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.optimize import linprog
 
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.serif": ["Times New Roman", "Times", "STIXGeneral", "DejaVu Serif"],
+    "mathtext.fontset": "stix",
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+})
+
 
 def moment_matrix(vn: np.ndarray, vt: np.ndarray):
     names, rows = [], []
@@ -121,10 +129,7 @@ def plot(results, velocity: np.ndarray, vn2: np.ndarray, vt2: np.ndarray,
                           transform=axes[row, 0].transAxes, rotation=90,
                           ha="center", va="center", fontsize=12, weight="bold")
 
-    fig.suptitle("Constructive non-uniqueness of wall flux from full-range moments\n"
-                 "All monomial moments through total degree 3 are identical",
-                 y=.995, fontsize=14, weight="bold")
-    fig.subplots_adjust(left=.075, right=.985, top=.88, bottom=.17,
+    fig.subplots_adjust(left=.075, right=.985, top=.96, bottom=.17,
                         hspace=.42, wspace=.34)
     cax_base = fig.add_axes([.15, .055, .31, .020])
     base_bar = fig.colorbar(contour, cax=cax_base, orientation="horizontal",
