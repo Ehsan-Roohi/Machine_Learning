@@ -134,10 +134,10 @@ fi
 export LEKZIAN_SPARTA_WORKER=1 RUN_ROOT CASE_LIST VALIDATOR PACKER PYTHON_BIN
 array_end="$((case_count - 1))"
 if [[ "${PILOT_MODE}" == "smoke" ]]; then
-  resources=(--ntasks=1 --cpus-per-task=1 --mem=4G --time=00:20:00 --array=0)
+  resources=(--nodes=1 --ntasks=1 --cpus-per-task=1 --mem=4G --time=00:20:00 --array=0)
   pack_mem=4G
 else
-  resources=(--ntasks=26 --cpus-per-task=1 --mem=120G --time=24:00:00 --array="0-${array_end}%${ARRAY_MAX_PARALLEL}")
+  resources=(--nodes=1 --ntasks=26 --cpus-per-task=1 --mem=120G --time=24:00:00 --array="0-${array_end}%${ARRAY_MAX_PARALLEL}")
   pack_mem=32G
 fi
 
@@ -154,7 +154,7 @@ job_id="${submit_output%%;*}"
 finalize_output="$(sbatch --parsable \
   --job-name="lekz_${PILOT_MODE}_pack" \
   --partition="${SLURM_PARTITION:-cpu}" \
-  --ntasks=1 --cpus-per-task=2 --mem="${pack_mem}" --time=01:00:00 \
+  --nodes=1 --ntasks=1 --cpus-per-task=2 --mem="${pack_mem}" --time=01:00:00 \
   --dependency="afterok:${job_id}" \
   --output="${WORK_DIR}/logs/${PILOT_MODE}_pack_%j.out" \
   --error="${WORK_DIR}/logs/${PILOT_MODE}_pack_%j.err" \
