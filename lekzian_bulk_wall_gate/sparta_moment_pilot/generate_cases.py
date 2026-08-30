@@ -272,16 +272,26 @@ print "MOMENT_PILOT_COMPLETE geometry={geometry} Ma=6 Kn={kn}"
 """
 
 
-def generate(root: Path, mode: str, only: str | None = None, force: bool = False) -> list[Path]:
+def generate(
+    root: Path,
+    mode: str,
+    only: str | None = None,
+    force: bool = False,
+    kn_values: tuple[float, ...] | None = None,
+) -> list[Path]:
     settings = SETTINGS[mode]
     root.mkdir(parents=True, exist_ok=True)
     generated: list[Path] = []
-    matrix = CASE_MATRIX
+    matrix = (
+        [(geometry, kn) for geometry in ("ISO", "FWD", "BWD") for kn in kn_values]
+        if kn_values is not None
+        else CASE_MATRIX
+    )
     if only:
-        matrix = [item for item in CASE_MATRIX if case_id(*item) == only]
+        matrix = [item for item in matrix if case_id(*item) == only]
         if not matrix:
-            raise SystemExit(f"--only {only!r} is not in the six-case matrix")
-    elif mode == "smoke":
+            raise SystemExit(f"--only {only!r} is not in the requested case matrix")
+    elif mode == "smoke" and kn_values is None:
         matrix = [("ISO", 0.1)]
 
     manifest = []
@@ -346,9 +356,16 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--mode", choices=sorted(SETTINGS), default="production")
     parser.add_argument("--only", help="Generate one exact case ID from the six-case matrix")
+    parser.add_argument(
+        "--kn-values", type=float, nargs="+",
+        help="Override the default Kn={0.1,0.8} matrix for all three geometries",
+    )
     parser.add_argument("--force", action="store_true", help="Discard and regenerate existing case directories")
     args = parser.parse_args()
-    cases = generate(args.output.resolve(), args.mode, args.only, args.force)
+    kn_values = tuple(args.kn_values) if args.kn_values else None
+    if kn_values is not None and any(kn <= 0.0 for kn in kn_values):
+        raise SystemExit("all --kn-values must be positive")
+    cases = generate(args.output.resolve(), args.mode, args.only, args.force, kn_values)
     print(f"generated {len(cases)} case(s) in {args.output.resolve()}")
     for case in cases:
         print(case.name)
