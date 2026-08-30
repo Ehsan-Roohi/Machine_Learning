@@ -134,3 +134,33 @@ and leave-one-case-out as well as LOCO:
 python analyze_gate_sensitivity.py /path/to/runs/production \
   --output /path/to/runs/production/gate_analysis/sensitivity
 ```
+
+For the S3 diagnostic, combine the short ISO collision tallies with the packed
+wall targets:
+
+```bash
+python analyze_half_range_gate.py /path/to/collision_archive \
+  /path/to/runs/production \
+  --loco-predictions /path/to/gate_analysis/loco_predictions.npz \
+  --output /path/to/gate_analysis/half_range
+```
+
+The parser supports both one-snapshot-per-file output and many tally snapshots
+appended to a single file.  It reconstructs loads in two ways: exact pre/post
+impulse as a control, and incident velocity plus the known diffuse wall kernel
+as the leakage-safe half-range diagnostic.
+
+The short pilot used a dump interval of 20, but `surf/collision/tally` is an
+instantaneous compute.  If its ten snapshots are too sparse, continue only the
+two steady ISO restarts with every-timestep tally output:
+
+```bash
+SPARTA_BIN=/absolute/path/to/spa_mpi MPI_MODULE=openmpi/5.0.3 \
+bash submit_unity_half_range_continuation.sh
+```
+
+The continuation resets only the timestep counter, preserves the steady
+particle state, samples 5000 evolved timesteps into one collision file per
+case, records five co-temporal wall-target blocks, validates coverage, and
+creates a compact ZIP automatically. Existing continuation output is never
+overwritten.
