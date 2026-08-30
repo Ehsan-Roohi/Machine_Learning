@@ -33,4 +33,6 @@ The pressure conclusion is also visible directly in the binned wall profile, not
 
 The transferable S1 baseline predicts the pressure rise on the wrong face, whereas S3 follows both the magnitude and the windward-to-leeward discontinuity of the DSMC wall tally. The red-shaded leeward face has fewer than 50 collision records per bin in the uploaded ten-timestep sample and remains a coverage warning until the long continuation finishes.
 
-![Direct Cp profile comparison](cp_profile_comparison.svg)
+The publication-facing physical plot maps both the DSMC target and S3 reconstruction directly onto the triangular wall in physical coordinates. Its third column shows the same values against normalized physical wall arclength, with the apex at \(s/L_w=0.5\).
+
+![Physical Cp map and arclength profile](cp_physical_geometry.svg)
