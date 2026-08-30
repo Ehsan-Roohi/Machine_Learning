@@ -30,6 +30,18 @@ def test_local_moment_projection() -> None:
     assert np.allclose([pnn[0], pnt[0], ptt[0], pzz[0]], [2.0, 1.0, 4.0, 3.0])
 
 
+def test_overhang_keeps_surface_normal_when_tangent_is_flipped() -> None:
+    columns = {"v1x": 0, "v1y": 1, "v2x": 2, "v2y": 3}
+    # FWD leading face: surface direction is up-left.  The clockwise surface
+    # orientation makes its gas-facing left normal point down-left, even though
+    # signed shear uses a positive-x tangent.
+    wall = np.array([[0.22, 0.0, 0.21, 0.03]])
+    _, tangent, normal = ANALYSIS._local_basis(wall, columns)
+    assert tangent[0, 0] > 0.0
+    assert normal[0, 0] < 0.0
+    assert normal[0, 1] < 0.0
+
+
 def test_duplicate_centers_keep_populated_subcell() -> None:
     columns = {"xc": 0, "yc": 1, "n": 2}
     grid = np.array([[0.5, 0.5, 2.0], [0.5, 0.5, 20.0], [1.5, 0.5, 5.0]])

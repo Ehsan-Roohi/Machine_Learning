@@ -59,13 +59,18 @@ def _local_basis(wall: np.ndarray, columns: dict[str, int]) -> tuple[np.ndarray,
     v1 = wall[:, [columns["v1x"], columns["v1y"]]]
     v2 = wall[:, [columns["v2x"], columns["v2y"]]]
     midpoint = 0.5 * (v1 + v2)
-    tangent = v2 - v1
-    tangent /= np.linalg.norm(tangent, axis=1, keepdims=True)
-    # A common left-to-right orientation makes signed shear comparable on both
-    # protrusion faces and gives a gas-facing normal on the lower wall.
+    surface_tangent = v2 - v1
+    surface_tangent /= np.linalg.norm(surface_tangent, axis=1, keepdims=True)
+    # Surface elements were written clockwise around the solid, so their left
+    # normal is gas-facing.  Preserve that orientation before changing the
+    # tangent sign: FWD/BWD contain overhanging faces whose gas normal points
+    # downward.  Coupling the normal to a forced positive-x tangent samples the
+    # wrong side of those faces.
+    normal = np.column_stack((-surface_tangent[:, 1], surface_tangent[:, 0]))
+    tangent = surface_tangent.copy()
+    # A common positive-x tangent keeps signed shear comparable on both faces.
     flip = (tangent[:, 0] < 0.0) | ((tangent[:, 0] == 0.0) & (tangent[:, 1] < 0.0))
     tangent[flip] *= -1.0
-    normal = np.column_stack((-tangent[:, 1], tangent[:, 0]))
     return midpoint, tangent, normal
 
 

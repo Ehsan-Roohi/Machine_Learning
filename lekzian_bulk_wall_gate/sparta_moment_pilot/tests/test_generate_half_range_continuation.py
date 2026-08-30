@@ -39,3 +39,21 @@ def test_generate_refuses_existing_output(tmp_path: Path) -> None:
         pass
     else:
         raise AssertionError("existing output should not be overwritten")
+
+
+def test_named_continuation_preserves_default_output(tmp_path: Path) -> None:
+    case_id = "FWD_Ma6_Kn0p2"
+    case = tmp_path / case_id
+    (case / "output").mkdir(parents=True)
+    (case / "output" / "final.restart").write_bytes(b"restart")
+    (case / "output" / "half_range_long").mkdir()
+    (case / "metadata.json").write_text(
+        json.dumps({"case_id": case_id, "wall_temperature_K": 300.0})
+    )
+    generated = MODULE.generate(
+        tmp_path, 20, 10, (case_id,), "half_range_fwd_extended"
+    )
+    assert generated == [case / "in.half_range_fwd_extended"]
+    assert (case / "output" / "half_range_long").is_dir()
+    assert "output/half_range_fwd_extended/collisions.dat" in generated[0].read_text()
+    assert (tmp_path / "half_range_fwd_extended_manifest.json").is_file()

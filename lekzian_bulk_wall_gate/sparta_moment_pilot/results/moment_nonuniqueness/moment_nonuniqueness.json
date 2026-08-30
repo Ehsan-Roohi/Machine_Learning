@@ -1,0 +1,26 @@
+{
+  "constraints": "all 2D monomial moments with total degree <= 3",
+  "grid": {
+    "points_per_axis": 31,
+    "vmax": 4.0
+  },
+  "relative_perturbation_bound": 0.35,
+  "constructions": [
+    {
+      "quantity": "pressure",
+      "flux_minus": 0.958723489224538,
+      "flux_plus": 1.0345600520741949,
+      "max_moment_mismatch": 6.34921841808855e-16,
+      "minimum_probability": 8.279206031343988e-10,
+      "total_variation_distance": 0.34365897482521535
+    },
+    {
+      "quantity": "shear",
+      "flux_minus": -0.021644278596642225,
+      "flux_plus": 0.021644278596642277,
+      "max_moment_mismatch": 2.2289891706167608e-16,
+      "minimum_probability": 8.279206031343988e-10,
+      "total_variation_distance": 0.343877240522267
+    }
+  ]
+}

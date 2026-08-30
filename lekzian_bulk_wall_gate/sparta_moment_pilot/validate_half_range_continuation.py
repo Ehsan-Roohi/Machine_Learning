@@ -18,10 +18,11 @@ def read_wall_dump(path: Path) -> np.ndarray:
     return np.loadtxt(lines[header + 1 :], ndmin=2)
 
 
-def validate_case(run_root: Path, case_id: str, expected_steps: int, expected_blocks: int) -> dict[str, object]:
+def validate_case(run_root: Path, case_id: str, expected_steps: int,
+                  expected_blocks: int, label: str = "half_range_long") -> dict[str, object]:
     case_dir = run_root / case_id
     metadata = json.loads((case_dir / "metadata.json").read_text())
-    output = case_dir / "output" / "half_range_long"
+    output = case_dir / "output" / label
     collision = output / "collisions.dat"
     if not collision.is_file() or collision.stat().st_size == 0:
         raise ValueError(f"{case_id}: missing collisions.dat")
@@ -64,8 +65,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("run_root", type=Path)
     parser.add_argument("--case")
+    parser.add_argument("--label", default="half_range_long")
     args = parser.parse_args()
-    manifest = json.loads((args.run_root / "half_range_long_manifest.json").read_text())
+    manifest = json.loads((args.run_root / f"{args.label}_manifest.json").read_text())
     selected = [item for item in manifest if args.case is None or item["case_id"] == args.case]
     if not selected:
         raise ValueError(f"unknown case {args.case}")
@@ -75,6 +77,7 @@ def main() -> None:
             item["case_id"],
             int(item["sampled_steps"]),
             int(item["sampled_steps"]) // int(item["block_steps"]),
+            args.label,
         )
         for item in selected
     ]
@@ -84,7 +87,7 @@ def main() -> None:
             f"records={summary['collision_records']} wall_blocks={summary['wall_blocks']}"
         )
     if args.case is None:
-        (args.run_root / "half_range_long_validation.json").write_text(
+        (args.run_root / f"{args.label}_validation.json").write_text(
             json.dumps(summaries, indent=2) + "\n"
         )
 

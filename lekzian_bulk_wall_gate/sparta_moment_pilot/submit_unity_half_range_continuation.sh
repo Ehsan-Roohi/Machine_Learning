@@ -2,11 +2,13 @@
 set -euo pipefail
 
 if [[ "${LEKZIAN_HALF_RANGE_FINALIZE:-0}" == "1" ]]; then
-  "${PYTHON_BIN}" "${VALIDATOR}" "${RUN_ROOT}"
-  archive="${WORK_DIR}/LEKZIAN_HALF_RANGE_${RUN_MODE}_JOB${ARRAY_JOB_ID}.zip"
-  relative=(half_range_long_manifest.json half_range_long_validation.json half_range_long_case_list.txt)
+  "${PYTHON_BIN}" "${VALIDATOR}" "${RUN_ROOT}" --label "${HALF_RANGE_LABEL}"
+  suffix=""
+  [[ "${HALF_RANGE_LABEL}" == "half_range_long" ]] || suffix="_${HALF_RANGE_LABEL}"
+  archive="${WORK_DIR}/LEKZIAN_HALF_RANGE_${RUN_MODE}${suffix}_JOB${ARRAY_JOB_ID}.zip"
+  relative=("${HALF_RANGE_LABEL}_manifest.json" "${HALF_RANGE_LABEL}_validation.json" "${HALF_RANGE_LABEL}_case_list.txt")
   while read -r case_id; do
-    relative+=("${case_id}/metadata.json" "${case_id}/in.half_range_long" "${case_id}/output/half_range_long")
+    relative+=("${case_id}/metadata.json" "${case_id}/in.${HALF_RANGE_LABEL}" "${case_id}/output/${HALF_RANGE_LABEL}")
   done < "${CASE_LIST}"
   (cd "${RUN_ROOT}" && zip -q -1 -r "${archive}" "${relative[@]}")
   sha256sum "${archive}" | tee "${archive}.sha256.txt"
@@ -22,14 +24,15 @@ if [[ "${LEKZIAN_HALF_RANGE_WORKER:-0}" == "1" ]]; then
   cd "${case_dir}"
   echo "Running half-range continuation ${case_id}"
   echo "SPARTA_BIN=${SPARTA_BIN}"
-  mpirun -np "${SLURM_NTASKS}" "${SPARTA_BIN}" -in in.half_range_long
-  "${PYTHON_BIN}" "${VALIDATOR}" "${RUN_ROOT}" --case "${case_id}"
+  mpirun -np "${SLURM_NTASKS}" "${SPARTA_BIN}" -in "in.${HALF_RANGE_LABEL}"
+  "${PYTHON_BIN}" "${VALIDATOR}" "${RUN_ROOT}" --case "${case_id}" --label "${HALF_RANGE_LABEL}"
   exit 0
 fi
 
 UNITY_ROOT="${UNITY_ROOT:-/project/pi_roohie_umass_edu/Combustion}"
 WORK_DIR="${WORK_DIR:-${UNITY_ROOT}/LEKZIAN_SPARTA_MOMENT_PILOT}"
 RUN_MODE="${RUN_MODE:-production}"
+HALF_RANGE_LABEL="${HALF_RANGE_LABEL:-half_range_long}"
 RUN_ROOT="${WORK_DIR}/runs/${RUN_MODE}"
 REPO_URL="${REPO_URL:-https://github.com/Ehsan-Roohi/Machine_Learning.git}"
 GIT_REF="${GIT_REF:-agent/lekzian-gate-test}"
@@ -54,22 +57,22 @@ PACKAGE_DIR="${CODE_DIR}/lekzian_bulk_wall_gate/sparta_moment_pilot"
 GENERATOR="${PACKAGE_DIR}/generate_half_range_continuation.py"
 VALIDATOR="${PACKAGE_DIR}/validate_half_range_continuation.py"
 SUBMITTER="${PACKAGE_DIR}/submit_unity_half_range_continuation.sh"
-CASE_LIST="${RUN_ROOT}/half_range_long_case_list.txt"
+CASE_LIST="${RUN_ROOT}/${HALF_RANGE_LABEL}_case_list.txt"
 
 case_args=()
 if [[ -n "${HALF_RANGE_CASE_IDS:-}" ]]; then
   read -r -a selected_cases <<< "${HALF_RANGE_CASE_IDS}"
   case_args=(--case-ids "${selected_cases[@]}")
 fi
-"${PYTHON_BIN}" "${GENERATOR}" "${RUN_ROOT}" --steps "${HALF_RANGE_STEPS:-5000}" --block-steps "${HALF_RANGE_BLOCK_STEPS:-1000}" "${case_args[@]}"
+"${PYTHON_BIN}" "${GENERATOR}" "${RUN_ROOT}" --steps "${HALF_RANGE_STEPS:-5000}" --block-steps "${HALF_RANGE_BLOCK_STEPS:-1000}" --label "${HALF_RANGE_LABEL}" "${case_args[@]}"
 
-export LEKZIAN_HALF_RANGE_WORKER=1 WORK_DIR RUN_MODE RUN_ROOT CASE_LIST VALIDATOR PYTHON_BIN SPARTA_BIN MPI_MODULE
+export LEKZIAN_HALF_RANGE_WORKER=1 WORK_DIR RUN_MODE RUN_ROOT CASE_LIST VALIDATOR PYTHON_BIN SPARTA_BIN MPI_MODULE HALF_RANGE_LABEL
 case_count="$(wc -l < "${CASE_LIST}")"
 array_end="$((case_count - 1))"
 submit="$(sbatch --parsable \
   --job-name=lekz_half_range \
   --partition="${SLURM_PARTITION:-cpu}" \
-  --nodes=1 --ntasks=26 --cpus-per-task=1 --mem=120G --time=02:00:00 \
+  --nodes=1 --ntasks=26 --cpus-per-task=1 --mem=120G --time="${HALF_RANGE_TIME:-02:00:00}" \
   --array="0-${array_end}%${ARRAY_MAX_PARALLEL:-2}" \
   --output="${WORK_DIR}/logs/half_range_%A_%a.out" \
   --error="${WORK_DIR}/logs/half_range_%A_%a.err" \
@@ -87,6 +90,9 @@ final="$(sbatch --parsable \
   --export=ALL,LEKZIAN_HALF_RANGE_WORKER=0,LEKZIAN_HALF_RANGE_FINALIZE=1,ARRAY_JOB_ID="${job_id}" \
   "${SUBMITTER}")"
 pack_id="${final%%;*}"
+archive_suffix=""
+[[ "${HALF_RANGE_LABEL}" == "half_range_long" ]] || archive_suffix="_${HALF_RANGE_LABEL}"
+expected_archive="${WORK_DIR}/LEKZIAN_HALF_RANGE_${RUN_MODE}${archive_suffix}_JOB${job_id}.zip"
 
 cat <<EOF
 Submitted half-range array: ${job_id}
@@ -94,5 +100,5 @@ Final validation/pack   : ${pack_id}
 Cases                   : ${CASE_LIST}
 Monitor                 : squeue -j ${job_id},${pack_id}
 Logs                    : ${WORK_DIR}/logs/half_range_${job_id}_*.out
-Expected archive        : ${WORK_DIR}/LEKZIAN_HALF_RANGE_${RUN_MODE}_JOB${job_id}.zip
+Expected archive        : ${expected_archive}
 EOF

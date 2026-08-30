@@ -123,24 +123,33 @@ def plot_profiles(test, predictions_by_seed, out):
             for col, kn in enumerate((0.2, 0.4)):
                 c = next(x for x in test if x.geometry == geometry and abs(x.knudsen-kn) < 1e-12)
                 mask = c.region["protrusion"]; wall = c.midpoint[mask]
-                ds = np.linalg.norm(np.diff(wall, axis=0), axis=1); s = np.r_[0, np.cumsum(ds)]; s /= s[-1]
+                face_length = np.r_[
+                    np.full(30, np.linalg.norm(wall[1]-wall[0])),
+                    np.full(30, np.linalg.norm(wall[31]-wall[30])),
+                ]
+                s = (np.cumsum(face_length)-0.5*face_length)/face_length.sum()
+                apex_s = face_length[:30].sum()/face_length.sum()
                 ax = axes[row, col]
                 y = c.targets[mask, target_index]
                 sem = c.target_blocks[:, mask, target_index].std(0, ddof=1)/2
                 ax.fill_between(s, y-2.776*sem, y+2.776*sem, color="0.83", alpha=.6, linewidth=0)
-                ax.plot(s, y, "o-", color="black", ms=2.7, lw=1.2, label="DSMC")
                 for feature in ("P", "S0", "S1", "S2"):
                     pred = np.mean([p[feature][c.case_id][mask, target_index] for p in predictions_by_seed], axis=0)
                     ax.plot(s, pred, "--" if feature == "P" else "-", color=COLORS[feature], lw=1.25, label=("parameter baseline" if feature == "P" else feature))
-                ax.axvline(.5, color="0.5", ls=":", lw=1); ax.axhline(0, color="0.6", lw=.7)
+                ax.plot(s, y, "o", color="black", mfc="white", mew=.8, ms=3.0,
+                        label="DSMC", zorder=5)
+                ax.axvline(apex_s, color="0.5", ls=":", lw=1); ax.axhline(0, color="0.6", lw=.7)
                 ax.set_title(fr"{geometry}, $Kn={kn:g}$", weight="bold")
                 ax.grid(alpha=.2)
                 if col == 0: ax.set_ylabel(r"$C_p$" if target == "cp" else r"signed $C_f$")
                 if row == 2: ax.set_xlabel(r"protrusion arclength, $s/L_w$")
         handles, labels = axes[0,0].get_legend_handles_labels()
-        fig.legend(handles, labels, ncol=5, loc="upper center", bbox_to_anchor=(.5, .985), frameon=False)
+        order = [labels.index("DSMC"), labels.index("parameter baseline"),
+                 labels.index("S0"), labels.index("S1"), labels.index("S2")]
+        fig.legend([handles[i] for i in order], [labels[i] for i in order],
+                   ncol=5, loc="upper center", bbox_to_anchor=(.5, .975), frameon=False)
         fig.suptitle(("Blind intermediate-Kn wall-pressure profiles" if target=="cp" else "Blind intermediate-Kn signed-shear profiles"), y=.999, fontsize=14, weight="bold")
-        fig.tight_layout(rect=(0,0,1,.945))
+        fig.tight_layout(rect=(0,0,1,.925))
         for ext in ("png", "pdf", "svg"):
             fig.savefig(out/f"interpolation_{target}_physical_profiles.{ext}", dpi=300, bbox_inches="tight")
         plt.close(fig)
@@ -161,7 +170,7 @@ def main():
     result, checks, verdict = aggregate(test, predictions, a.seeds)
     with (a.output/"interpolation_case_metrics.csv").open("w", newline="") as f:
         w=csv.DictWriter(f, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
-    decision={"verdict":verdict,"protocol":{"train_Kn":[0.1,0.8],"blind_test_Kn":[0.2,0.4],"geometries":["BWD","FWD","ISO"],"seeds":a.seeds,"equal_capacity_padding":True},"aggregate":result,"checks":checks}
+    decision={"verdict":verdict,"protocol":{"train_Kn":[0.1,0.8],"blind_test_Kn":[0.2,0.4],"geometries":["BWD","FWD","ISO"],"seeds":a.seeds,"equal_capacity_padding":True,"gas_normal":"left normal of the stored clockwise SPARTA surface element; independent of the positive-x shear tangent"},"aggregate":result,"checks":checks}
     (a.output/"interpolation_gate.json").write_text(json.dumps(decision,indent=2)+"\n")
     lines=["# Blind intermediate-Kn moment gate", "", f"**Verdict: {verdict}**", "", "Training: Kn=0.1 and 0.8. Blind testing: Kn=0.2 and 0.4 for BWD/FWD/ISO.", "", "| Target | P | S0 | S1 | S2 | S1 gain | 95% CI |", "|---|---:|---:|---:|---:|---:|---:|"]
     for t in TARGETS:

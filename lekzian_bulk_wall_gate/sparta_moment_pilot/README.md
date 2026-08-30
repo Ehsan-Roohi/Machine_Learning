@@ -100,9 +100,10 @@ python /path/to/pack_outputs.py /path/to/pilot
   bulk-input model.
 - Compare identical models using primitives, then `+Pij`, then `+Pij+qi`.
 - Use the collision tally only as a half-range diagnostic upper bound.
-- Continue only if `Pij` reduces signed-shear error by at least 20% relative,
-  with the gain larger than the DSMC block uncertainty and consistent across
-  geometries/Knudsen endpoints.
+- The completed blind gate found that `Pij` improves Cp relative to primitives
+  but worsens signed Cf; do not describe S1/S2 as a successful transferable
+  wall closure.  S3 remains a diagnostic/oracle unless an operational
+  distribution model supplies the incident half range away from the wall.
 
 ## Post-run moment-sufficiency gate
 
@@ -126,6 +127,12 @@ uncertainty from their between-block variation, samples bulk fields at
 Every score uses leave-one-complete-geometry-out evaluation.  The primary gate
 is the signed-shear NRMSE in the protrusion nearfield, with a case-level
 bootstrap interval and the DSMC block standard error reported alongside it.
+
+For overhanging FWD/BWD faces, the gas normal is the left normal of the stored
+clockwise SPARTA surface element.  It is intentionally computed before the
+tangent is reoriented in positive x for signed shear.  Forcing the normal to
+follow the shear tangent samples the wrong side of an overhang and is covered
+by a regression test.
 
 Audit the conclusion against a regularized linear model, two kinetic horizons,
 and leave-one-case-out as well as LOCO:
@@ -164,3 +171,34 @@ particle state, samples 5000 evolved timesteps into one collision file per
 case, records five co-temporal wall-target blocks, validates coverage, and
 creates a compact ZIP automatically. Existing continuation output is never
 overwritten.
+
+Named continuations allow a longer precision run without moving or replacing
+the completed `half_range_long` output.  For example:
+
+```bash
+RUN_MODE=interpolation HALF_RANGE_LABEL=half_range_fwd_extended \
+HALF_RANGE_CASE_IDS="FWD_Ma6_Kn0p2 FWD_Ma6_Kn0p4" \
+HALF_RANGE_STEPS=50000 HALF_RANGE_BLOCK_STEPS=5000 HALF_RANGE_TIME=06:00:00 \
+SPARTA_BIN=/absolute/path/to/spa_mpi MPI_MODULE=openmpi/5.0.3 \
+ARRAY_MAX_PARALLEL=2 bash submit_unity_half_range_continuation.sh
+```
+
+The label is restricted to letters, digits, underscores, and hyphens.  The
+generated input, output directory, manifest, validation file, case list, and
+archive all retain the label.
+
+## Constructive finite-moment counterexample
+
+`construct_moment_nonuniqueness.py` builds positive discrete velocity
+distributions with all two-dimensional monomial moments through total degree
+three identical, but with different incident half-range pressure or shear:
+
+```bash
+python construct_moment_nonuniqueness.py \
+  --output /path/to/moment_nonuniqueness
+```
+
+This is a pointwise structural counterexample for the finite S0/S1/S2 moment
+hierarchy.  It is not presented as a proof that every finite spatial patch is
+non-identifying; the blind DSMC interpolation gate addresses that empirical
+question.

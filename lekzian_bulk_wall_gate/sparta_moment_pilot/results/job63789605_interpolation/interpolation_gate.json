@@ -21,53 +21,54 @@
       71,
       101
     ],
-    "equal_capacity_padding": true
+    "equal_capacity_padding": true,
+    "gas_normal": "left normal of the stored clockwise SPARTA surface element; independent of the positive-x shear tangent"
   },
   "aggregate": {
     "cp": {
       "P": {
-        "nrmse_mean": 0.029854268941521926,
-        "nrmse_std": 0.0028831506087282585
+        "nrmse_mean": 0.03195575411302977,
+        "nrmse_std": 0.0038405669694949575
       },
       "S0": {
-        "nrmse_mean": 0.13584900668765912,
-        "nrmse_std": 0.0027602624618701943
+        "nrmse_mean": 0.0887040159204273,
+        "nrmse_std": 0.002745109106402724
       },
       "S1": {
-        "nrmse_mean": 0.17151285366680974,
-        "nrmse_std": 0.004099659374868573
+        "nrmse_mean": 0.061075228095877135,
+        "nrmse_std": 0.0008967721751381622
       },
       "S2": {
-        "nrmse_mean": 0.18983627842068565,
-        "nrmse_std": 0.0030799189815471062
+        "nrmse_mean": 0.05840388485824481,
+        "nrmse_std": 0.0008271659442539441
       },
-      "S1_gain_vs_S0_percent": -26.252563672510398,
+      "S1_gain_vs_S0_percent": 31.14716683102015,
       "S1_gain_ci95_percent": [
-        -32.63218167585113,
-        -13.67290449715351
+        3.827644517404532,
+        43.68159047008407
       ]
     },
     "cf": {
       "P": {
-        "nrmse_mean": 0.25913423086695275,
-        "nrmse_std": 0.015101097477616813
+        "nrmse_mean": 0.26372719822997165,
+        "nrmse_std": 0.01895112610603469
       },
       "S0": {
-        "nrmse_mean": 0.3703245725455545,
-        "nrmse_std": 0.0048911123988083964
+        "nrmse_mean": 0.35663756992664897,
+        "nrmse_std": 0.004622284726428104
       },
       "S1": {
-        "nrmse_mean": 0.4431254515628321,
-        "nrmse_std": 0.007943889880946525
+        "nrmse_mean": 0.43381955879771084,
+        "nrmse_std": 0.0034885309470332414
       },
       "S2": {
-        "nrmse_mean": 0.49262966916083445,
-        "nrmse_std": 0.01293300898662785
+        "nrmse_mean": 0.4575856613924699,
+        "nrmse_std": 0.0019144312744032188
       },
-      "S1_gain_vs_S0_percent": -19.658668210120513,
+      "S1_gain_vs_S0_percent": -21.641575475891727,
       "S1_gain_ci95_percent": [
-        -36.984521275134725,
-        -4.590785306978726
+        -38.0924884435416,
+        -5.095973670409625
       ]
     }
   },
