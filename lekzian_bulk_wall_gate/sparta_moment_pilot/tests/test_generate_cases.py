@@ -46,6 +46,16 @@ def test_production_matrix_and_schema(tmp_path: Path) -> None:
         assert len(case["column_schema"]["wall"]) == 15
 
 
+def test_custom_interpolation_matrix(tmp_path: Path) -> None:
+    cases = GEN.generate(tmp_path, "smoke", kn_values=(0.2, 0.4))
+    assert len(cases) == 6
+    assert {case.name for case in cases} == {
+        f"{geometry}_Ma6_Kn{kn}"
+        for geometry in ("ISO", "FWD", "BWD")
+        for kn in ("0p2", "0p4")
+    }
+
+
 def test_freestream_reproduces_archived_values() -> None:
     values = GEN.freestream(6.0, 0.1, GEN.SETTINGS["production"])
     assert abs(values["stream_speed_m_per_s"] - 1936.08) < 0.1
