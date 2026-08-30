@@ -26,3 +26,11 @@ Pressure strongly supports the half-range hypothesis, but the current ten-timest
 The pressure result is already a strong positive control: S3 reduces the ISO protrusion pressure error from roughly 136-143% for transferable S1 to 4-13%. The shear conclusion is not yet identifiable because several surface bins have zero or only a few collision records.
 
 ![Half-range diagnostic](half_range_gate.svg)
+
+## Direct wall-pressure profile check
+
+The pressure conclusion is also visible directly in the binned wall profile, not only in the aggregate error bars. On the collision-rich windward face, the incident S3 reconstruction has 13.4% NRMSE at Kn=0.1 and 4.5% at Kn=0.8. These are essentially unchanged from the all-bin values of 13.4% and 4.6%, respectively. Thus the apparent pressure recovery is not created by the sparse leeward bins.
+
+The transferable S1 baseline predicts the pressure rise on the wrong face, whereas S3 follows both the magnitude and the windward-to-leeward discontinuity of the DSMC wall tally. The red-shaded leeward face has fewer than 50 collision records per bin in the uploaded ten-timestep sample and remains a coverage warning until the long continuation finishes.
+
+![Direct Cp profile comparison](cp_profile_comparison.svg)
