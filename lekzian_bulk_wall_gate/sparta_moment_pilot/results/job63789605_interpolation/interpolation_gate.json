@@ -1,0 +1,81 @@
+{
+  "verdict": "FAIL",
+  "protocol": {
+    "train_Kn": [
+      0.1,
+      0.8
+    ],
+    "blind_test_Kn": [
+      0.2,
+      0.4
+    ],
+    "geometries": [
+      "BWD",
+      "FWD",
+      "ISO"
+    ],
+    "seeds": [
+      11,
+      29,
+      47,
+      71,
+      101
+    ],
+    "equal_capacity_padding": true
+  },
+  "aggregate": {
+    "cp": {
+      "P": {
+        "nrmse_mean": 0.029854268941521926,
+        "nrmse_std": 0.0028831506087282585
+      },
+      "S0": {
+        "nrmse_mean": 0.13584900668765912,
+        "nrmse_std": 0.0027602624618701943
+      },
+      "S1": {
+        "nrmse_mean": 0.17151285366680974,
+        "nrmse_std": 0.004099659374868573
+      },
+      "S2": {
+        "nrmse_mean": 0.18983627842068565,
+        "nrmse_std": 0.0030799189815471062
+      },
+      "S1_gain_vs_S0_percent": -26.252563672510398,
+      "S1_gain_ci95_percent": [
+        -32.63218167585113,
+        -13.67290449715351
+      ]
+    },
+    "cf": {
+      "P": {
+        "nrmse_mean": 0.25913423086695275,
+        "nrmse_std": 0.015101097477616813
+      },
+      "S0": {
+        "nrmse_mean": 0.3703245725455545,
+        "nrmse_std": 0.0048911123988083964
+      },
+      "S1": {
+        "nrmse_mean": 0.4431254515628321,
+        "nrmse_std": 0.007943889880946525
+      },
+      "S2": {
+        "nrmse_mean": 0.49262966916083445,
+        "nrmse_std": 0.01293300898662785
+      },
+      "S1_gain_vs_S0_percent": -19.658668210120513,
+      "S1_gain_ci95_percent": [
+        -36.984521275134725,
+        -4.590785306978726
+      ]
+    }
+  },
+  "checks": {
+    "S1_cp_nrmse_below_5_percent": false,
+    "S1_cf_nrmse_below_15_percent": false,
+    "S1_gain_at_least_20_percent_for_cf": false,
+    "cf_gain_ci_excludes_zero": false,
+    "S1_beats_parameter_baseline": false
+  }
+}
