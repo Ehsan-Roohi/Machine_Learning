@@ -103,3 +103,34 @@ python /path/to/pack_outputs.py /path/to/pilot
 - Continue only if `Pij` reduces signed-shear error by at least 20% relative,
   with the gain larger than the DSMC block uncertainty and consistent across
   geometries/Knudsen endpoints.
+
+## Post-run moment-sufficiency gate
+
+After `pack_outputs.py` creates all six `moment_blocks.npz` files, run the
+leakage-safe pilot analysis:
+
+```bash
+python analyze_moment_gate.py /path/to/runs/production \
+  --output /path/to/runs/production/gate_analysis
+```
+
+The script averages the four DSMC blocks before fitting, estimates target
+uncertainty from their between-block variation, samples bulk fields at
+`0.5, 1, 2 lambda` along the local gas-facing wall normal, and compares:
+
+- `S0`: primitives;
+- `S1`: primitives plus the locally projected momentum-flux tensor;
+- `S2`: `S1` plus locally projected translational energy flux;
+- shuffled `S1`: a locality/leakage control.
+
+Every score uses leave-one-complete-geometry-out evaluation.  The primary gate
+is the signed-shear NRMSE in the protrusion nearfield, with a case-level
+bootstrap interval and the DSMC block standard error reported alongside it.
+
+Audit the conclusion against a regularized linear model, two kinetic horizons,
+and leave-one-case-out as well as LOCO:
+
+```bash
+python analyze_gate_sensitivity.py /path/to/runs/production \
+  --output /path/to/runs/production/gate_analysis/sensitivity
+```
