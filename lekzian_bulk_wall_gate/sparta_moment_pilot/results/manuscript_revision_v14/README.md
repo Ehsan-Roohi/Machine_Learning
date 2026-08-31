@@ -16,7 +16,7 @@ This directory contains the complete, editable source for the revised manuscript
 
 ## Overleaf build
 
-Upload this directory or the separately supplied Overleaf ZIP, select `main.tex` as the main document, choose pdfLaTeX, and recompile from scratch. The manuscript uses AIP REVTeX 4.2 and compiles without a BibTeX step because the bibliography is included in `main.tex`.
+Upload this directory or the separately supplied Overleaf ZIP, select `main.tex` as the main document, choose pdfLaTeX, and recompile from scratch. The ablation table uses plain fixed-width columns for Overleaf compatibility. The manuscript uses AIP REVTeX 4.2 and compiles without a BibTeX step because the bibliography is included in `main.tex`.
 
 ## Verified output
 
@@ -29,5 +29,5 @@ Upload this directory or the separately supplied Overleaf ZIP, select `main.tex`
 The large manuscript PDF and the Overleaf upload archive are omitted from Git history to avoid duplicating the 60 embedded figure assets. Their verified SHA-256 values are recorded below:
 
 - Manuscript PDF: `2ef3d81ed8138d992dc078bdf0e8fa2074afe8675a57f6ea66339c280ba91cc0`
-- Overleaf ZIP: `69b6587c88bd29d498164c3ba75ba0e95b8a863066e0379627c6d5cc8041fdf7`
+- Overleaf ZIP: `eaec2296c20b9de7a2c5732a006e4754541bb01a6a51717d66cf198c20381c48`
 
