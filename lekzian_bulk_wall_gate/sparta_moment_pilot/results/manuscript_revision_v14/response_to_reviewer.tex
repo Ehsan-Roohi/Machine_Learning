@@ -1,0 +1,93 @@
+\documentclass[11pt]{article}
+\usepackage[margin=0.9in]{geometry}
+\usepackage{mathptmx}
+\usepackage{amsmath,amssymb}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.55em}
+\newcommand{\reviewer}[1]{\vspace{0.4em}\noindent\textbf{Reviewer comment.} \emph{#1}}
+\newcommand{\response}{\noindent\textbf{Response.} }
+\newcommand{\change}{\noindent\textbf{Change in the manuscript.} }
+
+\begin{document}
+\begin{center}
+{\Large\bfseries Response to the Reviewer}\par\vspace{0.6em}
+{\bfseries Revised title:}\par
+\emph{Bulk-to-Wall Observability in Rarefied Hypersonic Flow over Triangular Protrusions: Full-Range Moment Limits and Incident Half-Range Sufficiency}
+\end{center}
+
+Dear Reviewer,
+
+Thank you for a careful and technically specific assessment that helped sharpen the work. We agreed with the central concern: the previous version was strongest as a bounded, model-conditional observability study but did not yet justify a general physical statement about how a bulk state determines wall loading. We therefore made a major physics-centered revision rather than changing only the terminology. The manuscript keeps its original section structure and validation material, while the principal evidence is now a new direct simulation Monte Carlo (DSMC) hierarchy. This hierarchy compares primitive variables with the complete momentum-flux tensor, a heat-flux augmentation, and the incident half-range molecular distribution. The neural component is described throughout as a coordinate-conditioned multilayer perceptron (MLP) surrogate. The radius diagnostic $R_{95}$ is retained only as a secondary model-conditional result.
+
+The most important new results are:
+\begin{itemize}[leftmargin=1.5em]
+\item an equal-capacity blind interpolation test from Knudsen numbers $Kn=0.1,0.8$ to $Kn=0.2,0.4$ for $S_0$, $S_1=S_0+P_{ij}$, and $S_2=S_1+q_i$;
+\item a constructive example of two positive velocity distributions with identical full-range moments through degree three but different half-range pressure and opposite half-range shear;
+\item direct collision tallies from the Stochastic PArallel Rarefied-gas Time-accurate Analyzer (SPARTA), which reconstruct the wall-pressure coefficient $C_p$ and signed skin-friction coefficient $C_f$ from the incident half-range state $S_{\mathrm{HR}}$ for symmetric/isosceles (ISO), backward-facing (BWD), and forward-facing (FWD) protrusions;
+\item co-temporal block validation together with a separate, independent 40,000-step DSMC comparison that includes uncertainty bands; and
+\item a complete redesign of the figures in large landscape format with raw markers and explicit confidence intervals. The figures have no decorative titles and are supplied in Portable Document Format (PDF) and Scalable Vector Graphics (SVG) formats.
+\end{itemize}
+
+\reviewer{The phrase ``information horizon'' can be overread as a constitutive or causal length. Pair it with model-conditional predictive support and keep the claim bounded.}
+
+\response We agree. The new kinetic evidence shows why a purely spatial horizon cannot be the main constitutive result: finite full-range moments can discard the directionality required by the wall functional. We now define $R_{95}$ only as a secondary model-conditional predictive-support diagnostic. The title and abstract frame the result accordingly, while the Introduction, Methods, Physical Interpretation, Scope, and Conclusions no longer present it as a universal physical length.
+
+\change The revised title foregrounds ``Full-Range Moment Limits and Incident Half-Range Sufficiency.'' The section ``Nonlocal bulk-to-wall observability'' now begins with the finite-moment blind test and direct half-range reconstruction; the $R_{95}$ material appears under ``Secondary spatial-support diagnostic.''
+
+\reviewer{The surrogate and observability halves should be structurally connected, but the raw DSMC diagnostic must remain the reference and closed loop should be presented only as a preservation audit.}
+
+\response We adopted this distinction and strengthened it. The neural surrogate is explicitly a field-emulation and comparison tool, whereas raw DSMC wall impulses define every physical target. The finite-state test uses blind raw DSMC moment fields; $S_{\mathrm{HR}}$ uses molecular collision statistics and the known diffuse-wall kernel. Closed-loop results remain in the manuscript only as a secondary preservation audit.
+
+\change Figure 2 has been rebuilt as a physics-centered evidence diagram. The Methods section now distinguishes equal-capacity finite-state transfer from direct half-range reconstruction; it then treats co-temporal validation, independent-window validation, and closed-loop preservation as separate tests.
+
+\reviewer{The original result is genuinely strongest only for $C_q$; pressure is often censored and shear is less identifiable. Reframe the thesis as quantity dependent rather than universal.}
+
+\response We agree with the criticism of the original evidence. The revision no longer claims that the wall-pressure coefficient $C_p$, wall heat-transfer coefficient $C_q$, and signed skin-friction coefficient $C_f$ share one footprint. More importantly, we added direct data that address pressure and signed shear instead of relying on $R_{95}$. Co-temporal $S_{\mathrm{HR}}$ pressure normalized root-mean-square error (NRMSE) is 0.15--0.28\%, and signed-shear NRMSE is 1.30--7.35\% across six cases. Against independent 40,000-step windows, pressure remains at 1.68--2.85\%. BWD shear remains at 5.42--6.77\%; FWD shear is 16.65--25.09\%, but this error is comparable to a 13.93--20.70\% DSMC standard-error level and is therefore identified explicitly as noise limited.
+
+\change New physical-wall maps and arclength profiles are provided for $C_p$ and signed $C_f$. We do not use absolute shear in the new kinetic claim because its sign carries separation and orientation information.
+
+\reviewer{Knudsen-number trends have wide uncertainty; the bootstrap supports an order-$h_s$ scale, not fine monotonic scaling.}
+
+\response Agreed. All universal or fine monotonic scaling language has been removed. The $R_{95}$ curves are described as lower-bound, regressor-conditional summaries with right-censoring. The new blind test uses intermediate Knudsen numbers specifically to test transfer rather than infer a power law.
+
+\change The Scope and Conclusions state that three or four Knudsen numbers do not establish a universal scaling. The landscape uncertainty figure places censoring percentages directly beside the error bars.
+
+\reviewer{The effective number of independent physical conditions is small, and the tree bootstrap is not DSMC-realization uncertainty.}
+
+\response We agree. Five model seeds and case/seed bootstrap intervals are used only for the finite-state learner. DSMC sampling uncertainty is estimated from independent time blocks. We distinguish four statistical units: (i) model-seed variability; (ii) tree-bootstrap diagnostic variability; (iii) co-temporal DSMC block uncertainty; and (iv) cross-window repeatability. None is described as a full independent-realization uncertainty estimate.
+
+\change The Methods, independent-window subsection, Scope of Validity, figure captions, and Data Availability statement now make these statistical units explicit. The most demanding FWD shear case is reported as unresolved at the desired precision rather than treated as a successful result.
+
+\reviewer{Add an explicit dataset manifest for the 69 raw files, 57 unique physical conditions, and the 27-case analysis block.}
+
+\response Implemented. The manuscript now includes a one-glance evidence manifest that maps each data block to its scientific use and statistical unit. Machine-readable manifests record the raw and deduplicated cases, their duplicate mapping, and execution metadata; separate files describe the moment-pilot and half-range data, with checksums protecting the complete package.
+
+\change A new ``Case and evidence manifest'' subsection and table were added without deleting the detailed sampling-topology and execution-metadata material.
+
+\reviewer{Prefer ``coordinate-conditioned surrogate'' or ``branch--trunk MLP surrogate'' to an unqualified ``neural operator.''}
+
+\response Implemented throughout. The model is described by its actual architecture and role. The new kinetic conclusion does not depend on calling it an operator.
+
+\reviewer{Keep the surface-only wall-load validation in the main text.}
+
+\response Retained. It remains important because it establishes that direct wall-profile emulation works before the manuscript addresses the separate question of bulk-state sufficiency.
+
+\reviewer{Improve figure legibility at journal print scale, especially multi-panel profiles and legends.}
+
+\response All manuscript figures were regenerated or re-laid out in landscape form. The new plots use embedded serif fonts and external or non-overlapping legends; they also maintain consistent normalization and vector PDF/SVG output. Decorative figure titles were removed. For DSMC profiles, raw points remain visible; a facewise Savitzky--Golay line is used only as a display guide and never crosses the apex. All numerical metrics and confidence intervals use unsmoothed data.
+
+\reviewer{Independent DSMC realizations would strengthen the statistical argument, although they need not be mandatory.}
+
+\response We went beyond the requested minimum by adding a cross-window test. Five short collision-tally blocks are compared against a distinct 40,000-step wall-tally window. This test independently confirms the pressure result and the BWD shear result, while exposing insufficient precision in FWD shear that is reported transparently. A longer ten-block FWD continuation is being run as a follow-up but is not used in the revised claims.
+
+\vspace{0.4em}
+We thank the reviewer again. The revision preserves the complete validation and reproducibility record while making the scientific claim both stronger and narrower: low-order full-range moment states can be non-identifying for wall traction, whereas the incident half-range state is sufficient under the prescribed wall kernel. We believe this directly addresses the concern that the previous manuscript risked overinterpreting a model-conditional spatial diagnostic.
+
+Sincerely,\\
+Elyas Lekzian and Ehsan Roohi
+
+\end{document}

@@ -1,0 +1,332 @@
+[
+  {
+    "case_id": "ISO_Ma6_Kn0p1",
+    "geometry": "ISO",
+    "kn": 0.1,
+    "apex_s": 0.5000000000000001,
+    "metrics": {
+      "cp": {
+        "incident_nrmse": 0.0028228572545747903,
+        "incident_correlation": 0.9999928179871199,
+        "full_control_nrmse": 0.0005719179860348042,
+        "windward_incident_nrmse": 0.0027611119062526256,
+        "leeward_incident_nrmse": 0.015308664334115141,
+        "target_rms_sem_percent": 1.8202561150815606
+      },
+      "cf": {
+        "incident_nrmse": 0.07353100339961766,
+        "incident_correlation": 0.9974817163260967,
+        "full_control_nrmse": 0.006485869331711717,
+        "windward_incident_nrmse": 0.0723479074966953,
+        "leeward_incident_nrmse": 0.3256066080272112,
+        "target_rms_sem_percent": 11.628379645832812
+      },
+      "cq": {
+        "incident_nrmse": 0.006724230525480352,
+        "incident_correlation": 0.9999644514452144,
+        "full_control_nrmse": 0.0005332441525010134,
+        "windward_incident_nrmse": 0.006637459248933079,
+        "leeward_incident_nrmse": 0.04517464741732891,
+        "target_rms_sem_percent": 2.6334031571370784
+      }
+    },
+    "ignored_snapshots": [
+      [
+        1,
+        0
+      ],
+      [
+        5001,
+        43
+      ]
+    ],
+    "nblocks": 5,
+    "block_steps": 1000,
+    "t95": 2.7764451051977934,
+    "used_records": 188120,
+    "minimum_element_records": 109
+  },
+  {
+    "case_id": "ISO_Ma6_Kn0p8",
+    "geometry": "ISO",
+    "kn": 0.8,
+    "apex_s": 0.5000000000000001,
+    "metrics": {
+      "cp": {
+        "incident_nrmse": 0.0016208303656692952,
+        "incident_correlation": 0.999997688858882,
+        "full_control_nrmse": 0.0005557209427977152,
+        "windward_incident_nrmse": 0.001596565690460606,
+        "leeward_incident_nrmse": 0.013834881237752058,
+        "target_rms_sem_percent": 1.1709682494568576
+      },
+      "cf": {
+        "incident_nrmse": 0.02081830605508876,
+        "incident_correlation": 0.9997736018928226,
+        "full_control_nrmse": 0.0037549905775076014,
+        "windward_incident_nrmse": 0.020514660252012394,
+        "leeward_incident_nrmse": 0.350855458446937,
+        "target_rms_sem_percent": 3.4683603911878964
+      },
+      "cq": {
+        "incident_nrmse": 0.0013752123701220819,
+        "incident_correlation": 0.9999984435629751,
+        "full_control_nrmse": 0.0005334488267405772,
+        "windward_incident_nrmse": 0.0013485080984279188,
+        "leeward_incident_nrmse": 0.05803129675621962,
+        "target_rms_sem_percent": 1.462254640062937
+      }
+    },
+    "ignored_snapshots": [
+      [
+        1,
+        0
+      ],
+      [
+        5001,
+        79
+      ]
+    ],
+    "nblocks": 5,
+    "block_steps": 1000,
+    "t95": 2.7764451051977934,
+    "used_records": 334469,
+    "minimum_element_records": 220
+  },
+  {
+    "case_id": "BWD_Ma6_Kn0p2",
+    "geometry": "BWD",
+    "kn": 0.2,
+    "apex_s": 0.5729489932342099,
+    "metrics": {
+      "cp": {
+        "incident_nrmse": 0.0025325313090783425,
+        "incident_correlation": 0.9999948444587397,
+        "full_control_nrmse": 0.0005714753908446161,
+        "windward_incident_nrmse": 0.002488109455980532,
+        "leeward_incident_nrmse": 0.0128459386864933,
+        "target_rms_sem_percent": 1.1893174119949261,
+        "independent_incident_nrmse": 0.024075821910824444,
+        "independent_incident_correlation": 0.9994759375591752,
+        "independent_target_rms_sem_percent": 1.828800022508989,
+        "incident_rms_sem_percent": 1.1716456480309512
+      },
+      "cf": {
+        "incident_nrmse": 0.01954525373360305,
+        "incident_correlation": 0.9997290198919423,
+        "full_control_nrmse": 0.0005407445309375271,
+        "windward_incident_nrmse": 0.019044137437807064,
+        "leeward_incident_nrmse": 0.2833487347149487,
+        "target_rms_sem_percent": 3.853824610993587,
+        "independent_incident_nrmse": 0.06766070740053834,
+        "independent_incident_correlation": 0.9967167337410553,
+        "independent_target_rms_sem_percent": 6.225511142036144,
+        "incident_rms_sem_percent": 3.2187102611108336
+      },
+      "cq": {
+        "incident_nrmse": 0.0029539781667123127,
+        "incident_correlation": 0.9999918041179339,
+        "full_control_nrmse": 0.0005335455538285357,
+        "windward_incident_nrmse": 0.002885699625195206,
+        "leeward_incident_nrmse": 0.10654861150684199,
+        "target_rms_sem_percent": 1.7364564961035416,
+        "independent_incident_nrmse": 0.027999753987837144,
+        "independent_incident_correlation": 0.9992698799071849,
+        "independent_target_rms_sem_percent": 2.600982349377531,
+        "incident_rms_sem_percent": 1.714210295981014
+      }
+    },
+    "ignored_snapshots": [
+      [
+        1,
+        0
+      ],
+      [
+        5001,
+        49
+      ]
+    ],
+    "nblocks": 5,
+    "block_steps": 1000,
+    "t95": 2.7764451051977934,
+    "used_records": 295672,
+    "minimum_element_records": 189
+  },
+  {
+    "case_id": "BWD_Ma6_Kn0p4",
+    "geometry": "BWD",
+    "kn": 0.4,
+    "apex_s": 0.5729489932342099,
+    "metrics": {
+      "cp": {
+        "incident_nrmse": 0.0015292230635182804,
+        "incident_correlation": 0.9999979576516626,
+        "full_control_nrmse": 0.0005649381806593447,
+        "windward_incident_nrmse": 0.0014631346773499646,
+        "leeward_incident_nrmse": 0.01415548990993639,
+        "target_rms_sem_percent": 1.142943023908017,
+        "independent_incident_nrmse": 0.0170367535219733,
+        "independent_incident_correlation": 0.9997674090714359,
+        "independent_target_rms_sem_percent": 1.7123964904741855,
+        "incident_rms_sem_percent": 1.130207798123525
+      },
+      "cf": {
+        "incident_nrmse": 0.013024984584811246,
+        "incident_correlation": 0.999867060476423,
+        "full_control_nrmse": 0.0005358035000323388,
+        "windward_incident_nrmse": 0.012808196698458119,
+        "leeward_incident_nrmse": 0.2545593538414173,
+        "target_rms_sem_percent": 2.2349522881015593,
+        "independent_incident_nrmse": 0.0551784134915154,
+        "independent_incident_correlation": 0.9979261207159924,
+        "independent_target_rms_sem_percent": 4.236640677315519,
+        "incident_rms_sem_percent": 2.156265911895322
+      },
+      "cq": {
+        "incident_nrmse": 0.001630465736026886,
+        "incident_correlation": 0.9999980256835388,
+        "full_control_nrmse": 0.0005335534065944404,
+        "windward_incident_nrmse": 0.0015549067964074675,
+        "leeward_incident_nrmse": 0.14880195689226647,
+        "target_rms_sem_percent": 1.3364665688953579,
+        "independent_incident_nrmse": 0.02801930049131741,
+        "independent_incident_correlation": 0.9992711508255017,
+        "independent_target_rms_sem_percent": 2.296767415475236,
+        "incident_rms_sem_percent": 1.3481748165709109
+      }
+    },
+    "ignored_snapshots": [
+      [
+        1,
+        0
+      ],
+      [
+        5001,
+        65
+      ]
+    ],
+    "nblocks": 5,
+    "block_steps": 1000,
+    "t95": 2.7764451051977934,
+    "used_records": 317452,
+    "minimum_element_records": 212
+  },
+  {
+    "case_id": "FWD_Ma6_Kn0p2",
+    "geometry": "FWD",
+    "kn": 0.2,
+    "apex_s": 0.42705100676579033,
+    "metrics": {
+      "cp": {
+        "incident_nrmse": 0.0016622223260102174,
+        "incident_correlation": 0.9999973760310501,
+        "full_control_nrmse": 0.0005611349971097388,
+        "windward_incident_nrmse": 0.001629182596001746,
+        "leeward_incident_nrmse": 0.018502526679113507,
+        "target_rms_sem_percent": 1.1181054441096734,
+        "independent_incident_nrmse": 0.02040324737199816,
+        "independent_incident_correlation": 0.9996893690002914,
+        "independent_target_rms_sem_percent": 1.8391365365286954,
+        "incident_rms_sem_percent": 1.0706940576457589
+      },
+      "cf": {
+        "incident_nrmse": 0.07315802706687512,
+        "incident_correlation": 0.993667948447242,
+        "full_control_nrmse": 0.010636834517810747,
+        "windward_incident_nrmse": 0.07682340128405153,
+        "leeward_incident_nrmse": 0.0329149318200807,
+        "target_rms_sem_percent": 15.720159142673651,
+        "independent_incident_nrmse": 0.2509311298017355,
+        "independent_incident_correlation": 0.921483791737953,
+        "independent_target_rms_sem_percent": 20.70315031141859,
+        "incident_rms_sem_percent": 11.946874559753804
+      },
+      "cq": {
+        "incident_nrmse": 0.0036120296394778957,
+        "incident_correlation": 0.9999907674758015,
+        "full_control_nrmse": 0.0005338282269764164,
+        "windward_incident_nrmse": 0.003554905184354962,
+        "leeward_incident_nrmse": 0.013379389662537787,
+        "target_rms_sem_percent": 1.6733724282550708,
+        "independent_incident_nrmse": 0.03418827328370035,
+        "independent_incident_correlation": 0.9992733944015322,
+        "independent_target_rms_sem_percent": 2.597658261640745,
+        "incident_rms_sem_percent": 1.5956434800218577
+      }
+    },
+    "ignored_snapshots": [
+      [
+        1,
+        0
+      ],
+      [
+        5001,
+        71
+      ]
+    ],
+    "nblocks": 5,
+    "block_steps": 1000,
+    "t95": 2.7764451051977934,
+    "used_records": 353417,
+    "minimum_element_records": 381
+  },
+  {
+    "case_id": "FWD_Ma6_Kn0p4",
+    "geometry": "FWD",
+    "kn": 0.4,
+    "apex_s": 0.42705100676579033,
+    "metrics": {
+      "cp": {
+        "incident_nrmse": 0.001586736363069263,
+        "incident_correlation": 0.9999976832921734,
+        "full_control_nrmse": 0.0005562953658286106,
+        "windward_incident_nrmse": 0.0015630712991143915,
+        "leeward_incident_nrmse": 0.017927255761943973,
+        "target_rms_sem_percent": 0.9834051377974997,
+        "independent_incident_nrmse": 0.016750288821907735,
+        "independent_incident_correlation": 0.9997343492776823,
+        "independent_target_rms_sem_percent": 1.5339808672220194,
+        "incident_rms_sem_percent": 0.9692241841695841
+      },
+      "cf": {
+        "incident_nrmse": 0.057056672825891774,
+        "incident_correlation": 0.9962704961491355,
+        "full_control_nrmse": 0.008030208564401233,
+        "windward_incident_nrmse": 0.057635486548973436,
+        "leeward_incident_nrmse": 0.04014352111224091,
+        "target_rms_sem_percent": 8.92078729920113,
+        "independent_incident_nrmse": 0.16652895321646208,
+        "independent_incident_correlation": 0.9679010829017409,
+        "independent_target_rms_sem_percent": 13.933826273088158,
+        "incident_rms_sem_percent": 8.340279402034907
+      },
+      "cq": {
+        "incident_nrmse": 0.0030358671427474213,
+        "incident_correlation": 0.9999945000803161,
+        "full_control_nrmse": 0.0005334669024877888,
+        "windward_incident_nrmse": 0.0030033438497721553,
+        "leeward_incident_nrmse": 0.01460365287058548,
+        "target_rms_sem_percent": 1.5723827067664684,
+        "independent_incident_nrmse": 0.02893047071877729,
+        "independent_incident_correlation": 0.9993716219645195,
+        "independent_target_rms_sem_percent": 1.963031634903245,
+        "incident_rms_sem_percent": 1.521043262142062
+      }
+    },
+    "ignored_snapshots": [
+      [
+        1,
+        0
+      ],
+      [
+        5001,
+        91
+      ]
+    ],
+    "nblocks": 5,
+    "block_steps": 1000,
+    "t95": 2.7764451051977934,
+    "used_records": 404401,
+    "minimum_element_records": 385
+  }
+]

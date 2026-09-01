@@ -1,0 +1,29 @@
+{
+  "verdict": "FAIL",
+  "best_shear_configuration": {
+    "protocol": "LOCO",
+    "estimator": "ridge_100",
+    "depths_lambda": "0.5",
+    "target": "cf",
+    "nrmse_S0": 0.3998080305353618,
+    "nrmse_S1": 0.33507081540094413,
+    "nrmse_S2": 0.3363074518866809,
+    "S1_gain_percent": 16.1920747434041,
+    "fold_gains": [
+      {
+        "fold": "BWD",
+        "gain_percent": 31.157953408565962
+      },
+      {
+        "fold": "FWD",
+        "gain_percent": 11.836723213547726
+      },
+      {
+        "fold": "ISO",
+        "gain_percent": -11.505358309671356
+      }
+    ]
+  },
+  "all_fold_gains_positive": false,
+  "reason": "No audited configuration reaches 20% shear gain consistently across held-out units."
+}

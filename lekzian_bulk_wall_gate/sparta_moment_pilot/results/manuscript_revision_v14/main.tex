@@ -1,0 +1,1049 @@
+
+\pdfminorversion=7
+\documentclass[aip,pof,preprint,notitlepage,floatfix,amsmath,amssymb]{revtex4-2}
+
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{amsmath,amssymb,bm}
+\usepackage{mathptmx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{url}
+\hypersetup{colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue}
+\graphicspath{{figures/}}
+
+\newcommand{\Kn}{\mathrm{Kn}}
+\newcommand{\Ma}{\mathrm{Ma}}
+\newcommand{\hphs}{h_p/h_s}
+\newcommand{\Tw}{T_w/T_\infty}
+\newcommand{\DSMC}{\mathrm{DSMC}}
+\newcommand{\relLtwo}{\mathrm{rel}\,L_2}
+\newcommand{\QoI}{\mathrm{QoI}}
+% Full-page review figures.  The two bounds prevent either very wide or
+% vertically dense multi-panel graphics from being compressed.  Every
+% sideways figure occupies its own landscape page in the compiled manuscript.
+\newcommand{\landscapegraphic}[1]{%
+  \includegraphics[width=0.98\linewidth,height=0.84\textwidth,keepaspectratio]{#1}}
+% Continuation pages retain one scientific figure number while creating a
+% unique hyperlink destination for every physical page.
+\newcommand{\continuedcaption}[1]{%
+  \begingroup
+  \renewcommand{\theHfigure}{\arabic{figure}.continued.\arabic{page}}%
+  \addtocounter{figure}{-1}%
+  \caption{\textit{(Continued.)} #1}%
+  \endgroup}
+\newsavebox{\landscapefigurebox}
+\newenvironment{landscapefigurepage}
+  {\clearpage
+   \noindent\hbox{}\par\vspace{-\baselineskip}%
+   \AddToHookNext{shipout/before}{\global\pdfpageattr{/Rotate 90}}%
+   \AddToHookNext{shipout/after}{\global\pdfpageattr{}}%
+   \begin{figure}[H]\thispagestyle{empty}\centering
+   \begin{lrbox}{\landscapefigurebox}%
+   \begin{minipage}{0.96\textheight}\centering}
+  {\end{minipage}%
+   \end{lrbox}%
+   \rotatebox{90}{\usebox{\landscapefigurebox}}%
+   \end{figure}%
+   \clearpage}
+
+\begin{document}
+\makeatletter
+\@booleanfalse\titlepage@sw
+% The abstract is boxed when its environment is read, before \maketitle.
+% Apply a modest front-matter-only size reduction at capture time so the
+% complete abstract and keywords remain with the title on page 1.
+\def\frontmatter@abstractfont{\footnotesize\adjust@abstractwidth}%
+\def\frontmatter@title@above{\addvspace{0\p@}}%
+\def\frontmatter@title@below{\addvspace{0\p@}}%
+\def\frontmatter@authorbelow{\addvspace{0\p@}}%
+\def\@author@parskip{0\p@}%
+\def\frontmatter@preabstractspace{0\p@}%
+\def\frontmatter@postabstractspace{0\p@}%
+\makeatother
+
+\title{Bulk-to-Wall Observability in Rarefied Hypersonic Flow over Triangular Protrusions: Full-Range Moment Limits and Incident Half-Range Sufficiency}
+
+\author{Elyas Lekzian}
+\affiliation{Department of Aerospace Engineering, Faculty of New Sciences and Technologies, Semnan University, Semnan, Iran}
+
+\author{Ehsan Roohi}
+\email[Corresponding author: ]{roohie@umass.edu}
+\affiliation{Department of Mechanical and Industrial Engineering, University of Massachusetts Amherst, Amherst, Massachusetts 01003, United States of America}
+
+\date{\today}
+
+\begin{abstract}
+\fontsize{10}{11.2}\selectfont
+Wall pressure and shear in a rarefied gas are velocity-space fluxes, whereas the macroscopic fields supplied to a surrogate contain only a few full-range moments. This study identifies the information needed to recover wall traction on backward-facing (BWD), forward-facing (FWD), and isosceles (ISO) triangular protrusions. Geometry-consistent coordinate-conditioned surrogates first establish field and surface interpolation on a 57-condition direct simulation Monte Carlo (DSMC) database. The principal test compares primitive variables $S_0$ with two augmented full-range states: $S_1=S_0+P_{ij}$ includes the momentum-flux tensor, and $S_2=S_1+q_i$ adds heat flux. An incident half-range (HR) state, $S_{\mathrm{HR}}$, is constructed separately from pre-collision molecular velocities. Equal-capacity blind interpolation from $\Kn=0.1$ and 0.8 to $\Kn=0.2$ and 0.4 shows that $P_{ij}$ improves pressure recovery over primitives but does not surpass a parameter baseline. Finite full-range moments also fail to improve transferable signed shear. A constructive nonuniqueness example explains this limitation: two positive distributions have identical full-range moments through total degree three but opposite half-range shear. Applying the known diffuse-wall kernel to $S_{\mathrm{HR}}$ reconstructs co-temporal DSMC pressure with 0.15--0.28\% normalized root-mean-square error (NRMSE) and signed shear with 1.30--7.35\% NRMSE across six geometry--rarefaction cases. Against independent 40,000-step DSMC windows, pressure remains within 1.68--2.85\%. Shear remains within 5.42--6.77\% for BWD cases, whereas the FWD cases are noise-limited at 16.65--25.09\%, with DSMC standard-error levels of 13.93--20.70\%. The previously introduced radius $R_{95}$ is retained only as a model-conditional secondary diagnostic because its absolute shear accuracy is inadequate. Molecular collision data are not proposed as practical sensors; instead, $S_{\mathrm{HR}}$ provides a sufficiency benchmark that reveals what a transferable kinetic wall closure must preserve.
+\end{abstract}
+
+\keywords{Rarefied gas dynamics, direct simulation Monte Carlo, wall traction, half-range distribution, moment nonuniqueness, kinetic wall closure, uncertainty quantification}
+
+% AIP's preprint front matter inserts an output penalty immediately before the
+% abstract.  Disable only that front-matter branch while \maketitle is built so
+% that the title, authors, abstract, and keywords share page 1; restore the
+% preprint switch before the manuscript body begins.
+\makeatletter\@booleanfalse\preprintsty@sw\makeatother
+\maketitle
+\makeatletter\@booleantrue\preprintsty@sw\makeatother
+
+\section{Introduction}
+Hypersonic vehicles rarely present perfectly smooth aerodynamic surfaces. Localized protrusions arise from antennas and sensor windows, from wiring ducts and flanges, or from thermal-protection-system tile offsets and manufacturing imperfections. In continuum hypersonics, isolated roughness can amplify surface heating; it can also alter separation and transition while producing strong localized pressure loads. Reviews and experiments show that even a geometrically small disturbance can impose engineering-scale penalties in heat flux and pressure when it interacts with a thin high-speed boundary layer.\cite{Schneider2008,BerryHorvath2008} Studies of steps and ramps, as well as pins and isolated protuberances, show that local heating and pressure depend on the obstacle geometry and height together with the Mach number and upstream boundary-layer state.\cite{Grotowsky2000,Estruch2010,Chang2010,Qamar2012,Hahn2013,KumarReddy2013,KumarReddy2014} Related investigations address roughness-induced instability and transition over plates, cylinders and capsule-like bodies.\cite{DeTullio2013,Avallone2016,DuanXiao2017,DiGiovanni2018,BlancoCasares2022,Haley2023} At vehicle scale, pins and distributed protrusions can change both integrated and asymmetric loads; comparable effects occur for launch-vehicle appendages.\cite{Akshay2021,Tsutsui2022,Chandrakumar2023,Leopardi2024}
+
+The rarefied version is more subtle than a continuum roughness problem. When the mean free path is comparable to the protrusion height, molecular flight paths and wall accommodation become as important as local gradients. Nonlocal transport and statistical sampling add further complications. Kinetic studies have consequently addressed both forward- and backward-facing steps, combined gap-step geometries and wall-mounted cubes; surface-fitted obstacles have also been examined.\cite{PullinHarvey1977,LeiteSantos2015,NabapureMurthy2019,WangFang2020,NabapureMurthy2021,ManelaGibelli2020,Gavasane2018,MahdaviRoohi2022,SabouriLekzian2025} The triangular protrusion database of Sabouri and Lekzian is particularly useful because it isolates three roughness orientations in a rarefied hypersonic setting.\cite{SabouriLekzian2026} Their results show that forward-facing protrusions produce the strongest in-domain pressure and temperature peaks together with the largest surface pressure and heat-transfer coefficients. Backward-facing and isosceles cases instead develop distinct vortex structures and surface-load distributions. These trends make the database a demanding test of whether a surrogate can recover more than smoothly interpolated color contours. The source DSMC study already documented the orientation- and height-dependent vortex topology; here, those established flow structures are used only to interpret the load footprints rather than to repeat the vortex classification.
+
+The reference solutions are generated by direct simulation Monte Carlo (DSMC), a particle method that statistically samples the Boltzmann equation. DSMC is the standard high-fidelity method for transition-regime rarefied flows because it does not impose a Navier--Stokes--Fourier closure where the continuum hypothesis is questionable.\cite{Boyd2017,Stefanov2019} The simulations use the Stochastic PArallel Rarefied-gas Time-accurate Analyzer (SPARTA), whose Cartesian cut-cell framework supports local refinement around complex boundaries.\cite{Plimpton2019} Reliable DSMC data require checks of the time step and spatial grid together with particle-per-cell and sampling tests because the reference field contains stochastic scatter. The underlying protrusion simulations used locally refined grids and a fixed-particle-per-cell strategy. Validation against a hypersonic flat-plate experiment was supplemented by sensitivity studies for the grid, time step and sampling quality.\cite{Becker1974,Sun2011PPC,Shamseddine2019,Sabouri2024FPPC} Production calculations use monatomic argon with the variable-soft-sphere collision model. The plate and protrusion are fully diffuse and isothermal; free-stream conditions apply at the upstream and upper boundaries, while the downstream boundary is a vacuum outlet. Local refinement is concentrated around the protrusion, and the fixed-particle-per-cell implementation maintains approximately 20 simulator particles per active cell. The grid, time step and particle count were fixed after the verification studies reported with the source database.\cite{SabouriLekzian2026}
+
+Machine learning can reduce the cost of repeated DSMC queries, but a useful surrogate must respect both the physics and the sampling topology. Physics-informed neural networks and neural operators have made rapid progress in learning parametric maps for fluid and kinetic problems.\cite{Raissi2019,Karniadakis2021,Lu2021,Maulik2020,Morimoto2022,Peyvan2026,RoohiMahdavi2026} The rarefied protrusion problem nevertheless differs from smooth canonical operator-learning examples in three respects. First, its locally refined cut-cell mesh favors a coordinate-conditioned surrogate over a uniform-grid convolutional model. Second, the outputs have different spatial character: velocity and temperature vary relatively smoothly throughout the gas region; pressure is concentrated in the compression layer; and the one-dimensional surface coefficients contain sharp windward-face and apex peaks. Third, the database is structured but not fully factorial in all five parameters.
+
+
+A complementary literature addresses flow observability from incomplete measurements. Sparse-sensor reconstruction has been demonstrated with reduced-order autoencoders and inverse physics-informed neural networks. Other approaches include Voronoi-assisted learning, neural operators and recurrent decoders, as well as cross-attention or graph-transformer architectures and observation-guided generative models.\cite{Luo2023Sparse,HosseiniShiri2024,Fukami2021Sparse,Santos2023Senseiver,Zhao2024RecFNO,Williams2024SHRED,Kong2025CrossAttention,Wang2025Generative,Zhang2026Sparse} These methods primarily concern reconstruction of a high-dimensional flow field from a small number of observations. Optimal sensor placement similarly uses low-rank structure or sensitivity information; learned probability models and uncertainty reduction provide further criteria for selecting measurement locations.\cite{Manohar2018,Erichson2020,Liang2026Sensor} The direction considered here is reversed but physically related: the aim is to determine how much of the surrounding bulk field is required for recovery of a lower-dimensional wall-load profile. Rather than prescribing a sensor layout, the radius-controlled experiment identifies the spatial domain in which informative measurements of pressure, velocity and temperature can plausibly reside. Throughout this article, \emph{observability} means recovery of a wall-load profile from a prescribed bulk-field neighborhood with a fixed diagnostic. It does not denote a control-theoretic observability-rank condition or a Shannon-information measure.
+
+The distinction is especially relevant in a rarefied gas because stress and heat flux need not be local functions of strain rate and temperature gradient. Li, Hu and Wu recently proposed a non-localized spatial--temporal constitutive relation in which stress and heat flux depend on gradient histories over a finite neighborhood; its nonlocal parameters vary with Knudsen number.\cite{LiHuWu2024} Spatial support, however, is only one part of wall observability. A wall load is a half-space velocity integral over molecules incident on and emitted from the surface. Full-range moments can therefore be spatially well resolved yet still discard the directional information that distinguishes motion toward the wall from motion away from it. This applies to density and velocity as well as temperature, stress and heat flux. The resulting evidence hierarchy retains the radius diagnostic as a secondary model-conditional measure, while the central claim is tested directly in velocity space through molecular collision tallies.
+
+The work makes four contributions. First, geometry-consistent coordinate-conditioned surrogates reconstruct DSMC-resolved velocity and temperature together with pressure and protrusion-wall loads along interpolation directions supported by the 57-condition database. Correct interpretation of the base and apex is treated as a prerequisite for data integrity. Second, new SPARTA runs provide the full momentum-flux tensor and heat-flux vector, block-resolved wall impulses and pre-collision molecular velocities for six cross-geometry endpoints and six blind intermediate-Knudsen-number cases. Third, equal-capacity comparisons among $S_0$, $S_1$ and $S_2$ are paired with a constructive moment-nonuniqueness example. Failure of the low-order states can therefore be traced to information loss rather than inferred from one neural network. Fourth, the incident half-range reconstruction $S_{\mathrm{HR}}$ is tested against co-temporal DSMC blocks and independent 40,000-step windows while retaining signed shear and its uncertainty. The earlier $R_{95}$ analysis and closed-loop audit remain because they document spatial support in the macroscopic fields, but neither is used as constitutive evidence. Together, these results identify the kinetic information that a wall model or kinetic--continuum coupling interface must preserve to transfer across rarefaction and geometry.
+
+\section{Physical problem and data set}
+The problem is a two-dimensional rarefied hypersonic argon flow over a flat plate containing a triangular protrusion. All geometry used by the surrogates and all geometry shown in Fig.~\ref{fig:geometry} are nondimensionalized by the protrusion-base length $h_s$; consequently, the uniform coordinate scaling used in the DSMC input files does not enter the learning variables or the geometric interpretation. The normalized coordinates are
+\begin{equation}
+ \xi=\frac{x-x_{\rm apex}}{h_s}, \qquad \eta=\frac{y-y_b}{h_s}.
+\end{equation}
+In these apex-centered coordinates, the backward-facing (BWD) base endpoints are $(-1.5,0)$ and $(-0.5,0)$. The forward-facing (FWD) endpoints are $(0.5,0)$ and $(1.5,0)$, while the isosceles (ISO) endpoints are $(-0.5,0)$ and $(0.5,0)$. The apex is $(0,h_p/h_s)$ in every case. Hence the normalized base length is unity, while orientation is represented solely by the apex position relative to the base. This definition is applied to the solid masks and distance features as well as the field and wall-profile coordinates. It prevents bounding-box extrema from being misidentified as the physical base.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig01_geometry_partA_BWD-FWD_large.pdf}
+\caption{Normalized triangular geometries used in this work; the backward-facing and forward-facing configurations are shown here. The axes are $\xi=(x-x_{\rm apex})/h_s$ and $\eta=(y-y_b)/h_s$, and $h_p/h_s=1.5$ is used for illustration.}
+\label{fig:geometry}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig01_geometry_partB_ISO_large.pdf}
+\continuedcaption{Normalized isosceles configuration. The numerical coordinate scaling used in the DSMC input files does not affect the geometry supplied to the surrogates, and the base length is unity in these coordinates.}
+\end{landscapefigurepage}
+
+The archive contains 69 raw DSMC files. Of these, 27 belong to the complete Mach--rarefaction--orientation block; the height sweep contains 24 files and the wall-temperature sweep contains 18. Twelve files repeat baseline physical conditions from the complete block. They comprise six $h_p/h_s=1.5$, $T_w/T_\infty=1$ cases in the height sweep and six $T_w/T_\infty=1$, $h_p/h_s=1.5$ cases in the wall-temperature sweep. Removing these exact duplicate keys leaves 57 unique conditions: the original 27, another 18 at $h_p/h_s=1.0,1.25,$ and $2.0$, and 12 at $T_w/T_\infty=2$ and $4$. The Mach--rarefaction--orientation block covers Mach numbers $4$, $6$ and $8$ together with Knudsen numbers $0.1$, $0.33$ and $0.8$ for all three orientations. At Mach number $6$, the height ratio ranges from $1.0$ to $2.0$ and the wall-temperature ratio ranges from $1$ to $4$. Table~\ref{tab:topology} states this topology explicitly. The first block is a full factorial sampling of Mach number, Knudsen number and orientation at fixed height ratio and wall temperature. The remaining blocks test geometric and thermal sensitivity at Mach number $6$. This design supports interpolation along the sampled axes; simultaneous nonbaseline height--temperature, height--Mach and wall-temperature--Mach interactions remain outside the topology. A machine-readable provenance package lists all 69 raw keys and the 57 deduplicated conditions. It also provides the duplicate mapping and the 27 cases used in the primary observability block. Appendix~\ref{app:dsmc_execution} summarizes the available run-level particle counts and processor allocations together with reported runtimes and normalized time steps. The full record is supplied in comma-separated values (CSV) format. Execution-accounting metadata are available for 51 of the 57 unique conditions; the six omitted records are the $h_p/h_s=2.0$ height-sweep cases, whose field and surface data remain part of the database.
+
+
+\begin{table}[t]
+\centering
+\caption{Supported sampling topology of the DSMC database. The validation and interpretation in this paper are restricted to these sampled directions.}
+\label{tab:topology}
+\small
+\begin{ruledtabular}
+\begin{tabular}{llll}
+Sampling block & Varied quantities & Fixed quantities & Supported sensitivity \\
+Mach--rarefaction--orientation & \parbox[t]{0.25\textwidth}{Mach number $\{4,6,8\}$; Knudsen number $\{0.1,0.33,0.8\}$; ISO/FWD/BWD orientation} & \parbox[t]{0.18\textwidth}{$h_p/h_s=1.5$; $T_w/T_\infty=1$} & \parbox[t]{0.25\textwidth}{Full factorial Mach number $\times$ Knudsen number $\times$ orientation.} \\
+Height sweep & \parbox[t]{0.25\textwidth}{$h_p/h_s\in\{1.0,1.25,1.5,2.0\}$; Knudsen number $\{0.1,0.33\}$; orientation} & \parbox[t]{0.18\textwidth}{Mach number $6$; $T_w/T_\infty=1$} & \parbox[t]{0.25\textwidth}{Height sensitivity and height-ratio $\times$ Knudsen-number variation at Mach number $6$.} \\
+Wall-temperature sweep & \parbox[t]{0.25\textwidth}{$T_w/T_\infty\in\{1,2,4\}$; Knudsen number $\{0.1,0.33\}$; orientation} & \parbox[t]{0.18\textwidth}{Mach number $6$; $h_p/h_s=1.5$} & \parbox[t]{0.25\textwidth}{Wall-temperature sensitivity and wall-temperature $\times$ Knudsen-number variation at Mach number $6$.} \\
+\end{tabular}
+\end{ruledtabular}
+\end{table}
+
+\subsection{Case and evidence manifest}
+Table~\ref{tab:evidence_manifest} makes the analysis membership explicit. The complete machine-readable mapping is supplied in \texttt{data/manifest\_raw.csv}, \texttt{data/manifest\_unique\_physical\_conditions.csv}, and the SPARTA pilot manifests. Exact duplicate physical keys are used only once in learning and validation splits. Collision archives are never used as wall targets for the finite-moment learner; direct surface impulses remain the targets throughout.
+
+\begin{table}[h]
+\centering
+\caption{One-glance case and evidence manifest.}
+\label{tab:evidence_manifest}
+\small
+\begin{tabular}{lccc}
+\toprule
+Block & Physical cases & Principal use & Statistical unit \\
+\midrule
+Legacy raw archive & 69 files / 57 unique & Field and direct-wall surrogates & Physical condition \\
+Mach--$\Kn$--orientation & 27 & Secondary $R_{95}$ diagnostic & Held-out physical case \\
+Moment endpoints & 6 ($\Kn=0.1,0.8$) & Train finite-state comparison & Geometry--$\Kn$ case \\
+Moment interpolation & 6 ($\Kn=0.2,0.4$) & Blind finite-state test & Geometry--$\Kn$ case \\
+Half-range collision pilot & 6 & Co-temporal $S_{\mathrm{HR}}$ validation & Time block and wall bin \\
+Independent wall reference & Same 6 & Cross-window repeatability & Four 10,000-step blocks \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+The held-out cases test interpolation in physically meaningful directions. The first validation group removes the Mach number $6$, Knudsen number $0.33$ slice across all orientations from the full Mach-rarefaction-orientation block. The second removes the intermediate height ratio $h_p/h_s=1.25$ in the height-sweep block. The third removes the intermediate wall-temperature ratio $T_w/T_\infty=2$ in the wall-temperature block. Together these tests evaluate supported sensitivities: the coupled effect of Mach number, rarefaction, and orientation; height dependence at Mach number $6$; and wall-temperature dependence at Mach number $6$.
+
+The revised kinetic-sufficiency study adds a controlled SPARTA pilot at Mach number 6. Production endpoints use $\Kn=0.1$ and 0.8 for all three orientations; blind interpolation cases use $\Kn=0.2$ and 0.4. Each case contains four statistically separated field and wall blocks. The field archive stores primitive quantities together with $P_{xx}$, $P_{yy}$, $P_{zz}$, $P_{xy}$ and the translational heat-flux components. Surface targets are accumulated from molecular momentum exchange, not inferred from the nearby cell pressure. Separate continuation runs record pre-collision velocities on the protrusion faces in five 1000-step blocks. The pressure and signed-shear comparisons use 60 arclength bins and Student-$t$ 95\% confidence intervals. An independent reference is formed from the original four 10,000-step surface-tally blocks (40,000 steps total), so the most stringent comparison does not reuse the same sampling window as the collision reconstruction. This design provides two distinct checks: co-temporal closure consistency and cross-window reproducibility under DSMC noise.
+
+\section{Output-specialized surrogate and observability framework}
+The framework is organized by information content rather than by network architecture. Figure~\ref{fig:framework}(a) separates three finite full-range states from the incident half-range state. In local wall-normal and wall-tangent coordinates,
+\begin{align}
+S_0 &= \{\rho,u_n,u_t,T,p\},\\
+S_1 &= S_0\cup\{P_{nn},P_{nt},P_{tt},P_{zz}\},\\
+S_2 &= S_1\cup\{q_n,q_t\},
+\end{align}
+where $P_{ij}=\int m c_i c_j f\,d\bm{c}$ and $q_i=\int \tfrac12m c^2c_i f\,d\bm{c}$ are full-range moments. By contrast,
+\begin{equation}
+S_{\mathrm{HR}}=f^{-}(\bm{c})\big|_{\bm{c}\cdot\bm{n}<0}
+\end{equation}
+retains the distribution of molecules moving toward the wall. The label $S_{\mathrm{HR}}$ replaces the preliminary label ``S3 incident'': the state is not merely a third finite moment set but a qualitatively different half-range object. For a specified gas--surface scattering kernel $K_w$, wall traction follows from incoming and reflected momentum flux,
+\begin{equation}
+\bm{t}_w=\int_{\bm{c}\cdot\bm{n}<0}m\bm{c}(\bm{c}\cdot\bm{n})f^{-}\,d\bm{c}
+ +\int_{\bm{c}\cdot\bm{n}>0}m\bm{c}(\bm{c}\cdot\bm{n})f^{+}[f^{-},K_w],d\bm{c}.
+\label{eq:walltraction}
+\end{equation}
+The normal component gives $p_w$ and the tangent component gives the signed shear $\tau_w$. The normalized coefficients are $C_p=(p_w-p_\infty)/(\tfrac12\rho_\infty U_\infty^2)$ and $C_f=\tau_w/(\tfrac12\rho_\infty U_\infty^2)$.
+
+Figure~\ref{fig:framework}(b) shows the validation logic. Raw DSMC surface impulses are the target. Full-range states are compared with identical model capacity and blind intermediate-Knudsen-number holdouts. The half-range result is computed directly from collision statistics and the known diffuse-wall kernel, then compared first with co-temporal blocks and subsequently with an independent sampling window. The neural surrogate remains valuable for rapid field reconstruction and as a controlled comparison tool, but it does not define the kinetic sufficiency claim. This separation is important: good agreement of $S_{\mathrm{HR}}$ with the direct surface tally tests the wall-flux identity, whereas the failure of $S_0$--$S_2$ under blind transfer tests information loss in finite moment compression.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig02_framework_panel_a_large.pdf}
+\caption{Physics-first organization of the revised study. (a) $S_0$, $S_1$, and $S_2$ are nested finite full-range moment states used in an equal-capacity blind interpolation test. $S_{\mathrm{HR}}$ is the incident half-range molecular state and is combined with the known diffuse-wall kernel.}
+\label{fig:framework}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig02_framework_panel_b_large.pdf}
+\continuedcaption{Panel (b) gives the validation logic. Direct DSMC surface impulses define the targets; co-temporal blocks test closure consistency, independent windows test repeatability, and a constructive nonuniqueness example separates information sufficiency from model capacity.}
+\end{landscapefigurepage}
+
+For the finite-state test, every state uses the same extremely randomized trees (ExtraTrees) ensemble. The number of trees and leaf size are fixed, as are the random seeds, wall-coordinate features and training--test partition. Training uses only $\Kn=0.1$ and 0.8, whereas testing uses only $\Kn=0.2$ and 0.4. A parameter-and-geometry model $P$ provides a strong low-dimensional baseline. Five seeds quantify training variability; the reported bootstrap interval for the $S_1$-over-$S_0$ gain is computed over cases and seeds. This design prevents a larger input set from receiving an unreported capacity advantage.
+
+For the half-range reconstruction, every recorded incoming simulator particle contributes its normal and tangent momentum flux to its wall element and time block. The emitted contribution is the analytic expectation of the fully diffuse reflection kernel at the prescribed wall temperature. Counts are accumulated before arclength binning so that empty or weakly sampled elements cannot be silently interpolated. Lines in the profile figures use a seven-point, second-order Savitzky--Golay filter separately on the two faces solely for display; raw binned markers, confidence intervals, NRMSE values, and correlations are always computed from the unsmoothed arrays, and no smoothing crosses the apex.
+
+The coordinate-conditioned surrogate used for the 57-case field study is still designed around the physical character of the outputs rather than around code convenience. A single network trained on all fields and all wall quantities with one loss is statistically attractive but physically mismatched: bulk temperature and velocity occupy the entire gas region and vary relatively smoothly, pressure is localized and positive in the compression layer, and wall coefficients are one-dimensional functions with sharp windward-face and apex peaks.
+
+The smooth-field surrogate predicts $u$, $v$ and $T$ at gas-cell locations. Its case input contains the Mach and logarithmic Knudsen numbers together with the height ratio, wall-temperature ratio and orientation. Coordinate inputs comprise $(\xi,\eta)$ and Fourier features, supplemented by smooth distances to the wall, edges and apex. Hard region indicators were avoided because they produced block-like discontinuities in preliminary contours. The pressure-focused surrogate predicts $\log P$ with weights that emphasize high-pressure cells near the wall and apex. This transformation stabilizes the positive pressure field and prevents the broad low-pressure region from dominating the loss. The wall-surface surrogate predicts $C_p$, $C_q$ and $|\tau|$ from the surface coordinate and face identity. Its geometric inputs also describe the tangent and normal directions, local midpoint and apex distance. Here $C_p$ is the wall pressure coefficient, $C_q$ is the wall heat-transfer coefficient used in the DSMC database and $|\tau|$ is the magnitude of the wall shear-stress coefficient. A separate surface model prevents sparse wall data from being overwhelmed by hundreds of thousands of gas-cell samples.
+
+The smooth-field and pressure surrogates use multiplicative branch--trunk multilayer perceptrons. Case and coordinate features are encoded separately, multiplied in a latent space and decoded through fully connected layers with sigmoid linear unit (SiLU) activations. The smooth-field model has 160 latent channels and four hidden layers of width 224, with dropout 0.03. It uses the Adam optimizer with decoupled weight decay (AdamW) at an initial learning rate of $7\times10^{-4}$. The pressure-focused model has 192 latent channels and five hidden layers of width 256, with dropout 0.01 and an AdamW initial learning rate of $4\times10^{-4}$. The wall-surface surrogate has 128 latent channels, hidden width 192 and depth 3. Its dropout is 0.03, its AdamW initial learning rate is $8\times10^{-4}$ and its loss emphasizes the peak and apex regions. All models use weight decay and Huber-type losses. Gradient clipping, plateau-based learning-rate reduction and early stopping provide additional regularization. Compact pilot sweeps selected the reported widths, depths and latent dimensions by comparing validation relative-$L_2$ error across epochs. Dropout and initial learning rate were selected in the same sweeps, which also assessed preservation of localized pressure and wall-load peaks. Smaller models under-resolved the apex and compression structures; further increases in capacity provided negligible validation improvement and increased run-to-run variability. The selected settings were fixed for every reported holdout rather than retuned case by case. The submission package contains the training and post-processing code together with random seeds and processed split tables.
+
+The main field metric is the relative $L_2$ error,
+\begin{equation}
+ \relLtwo(\phi)=\frac{\|\phi_{\rm pred}-\phi_{\rm DSMC}\|_2}{\|\phi_{\rm DSMC}\|_2},
+\end{equation}
+where ``pred'' denotes the neural prediction. For signed or near-zero diagnostics such as entropy-index error, a robust range-normalized percentage is used. If $S$ is the entropy-index field, the plotted error is
+\begin{equation}
+ E_S^{\%}=100\frac{S_{\rm pred}-S_{\rm DSMC}}{S_{{\rm DSMC},99}-S_{{\rm DSMC},1}},
+\end{equation}
+where $S_{{\rm DSMC},99}$ and $S_{{\rm DSMC},1}$ are the 99th and 1st percentiles of the DSMC entropy-index field for the same case. This definition avoids singular relative errors where the entropy proxy is close to zero.
+
+
+The primary nonlocal observability analysis is performed directly on raw DSMC bulk fields in the full-factorial 27-case block with $\Ma\in\{4,6,8\}$, $\Kn\in\{0.1,0.33,0.8\}$, all three orientations, $h_p/h_s=1.5$, and $T_w/T_\infty=1$. For a wall point at normalized surface coordinate $s$, define the gas-region neighborhood
+\begin{equation}
+ \Omega_R(s)=\left\{\bm{x}\in\Omega_g:\|\bm{x}-\bm{x}_w(s)\|\le R h_s\right\},
+\end{equation}
+and let $\bm{z}=(u,v,T,\log P)$. A feature operator $\Phi_R$ extracts distance-weighted means, standard deviations, extrema, nearest-point values, and local tangent/normal gradients of $\bm{z}$ in $\Omega_R(s)$. The full-domain descriptor uses concentric ring statistics so that spatial distribution is retained rather than collapsed to one global average. Separate extremely randomized tree regressors\cite{Geurts2006} learn
+\begin{equation}
+ \widehat{y}_{\alpha}(s)=\mathcal{G}_{\alpha,R}\!\left[\bm{\theta},s,\Phi_R(\bm{z})\right],
+ \qquad \alpha\in\{C_p,C_q,|\tau|\},
+\end{equation}
+where $\bm{\theta}$ contains Mach number, logarithmic Knudsen number, orientation, height ratio, and wall-temperature ratio. The tested radii are $R/h_s=0.05$, 0.1, 0.2, 0.35, 0.5, 0.75, 1, 1.5, 2, and 3, together with a full-domain descriptor. Two baselines are retained: a parameter-only model and a wall-local model based on the nearest gas cells. Each validation fold removes all 60 surface samples of one physical condition; points from a held-out DSMC field are never distributed between training and validation.
+
+For physical case $c$ and wall quantity $\alpha$, define the casewise error $E_{\alpha}^{(c)}(R)$ by the relative $L_2$ norm of the full wall profile. The information horizon is
+\begin{equation}
+ R_{95,\alpha}^{(c)}=\min\left\{R:E_{\alpha}^{(c)}(R)\le1.05E_{\alpha}^{(c)}(\mathrm{full})\right\}.
+ \label{eq:R95}
+\end{equation}
+If the criterion is not met by $R/h_s=3$, the observation is reported as right-censored, $R_{95}/h_s>3$, and retained in the lower-bound summaries. Accordingly, $R_{95}$ is interpreted as the smallest tested radius whose descriptor reproduces the wall-load profile within 5\% of the full-domain diagnostic under the same regressor family: a model-conditional predictive-support length, rather than a constitutive interaction scale.
+
+A separate closed-loop preservation audit evaluates how faithfully the field surrogates retain the same model-conditional footprint. For each of the three independent Mach-number 6, Knudsen-number 0.33 orientation holdouts, the extremely randomized-tree diagnostic is trained on raw DSMC descriptors from the remaining 26 physical cases. The unchanged diagnostic is then evaluated twice for the held-out case: first with raw DSMC descriptors and then with descriptors extracted from the reconstructed $u$, $v$, $T$, and pressure fields. The target in both evaluations is the raw DSMC wall profile. Twenty diagnostic random seeds provide medians and 2.5--97.5 percentile intervals for the change in lower-bound $R_{95}/h_s$, censoring agreement, and full-domain error. The raw-DSMC analysis therefore defines the reference footprint, while the closed-loop calculation quantifies preservation after reconstruction.
+
+A tree-bootstrap sensitivity analysis provides a complementary uncertainty estimate for $C_q$. Individual decision trees in each fitted ensemble are resampled with replacement, following the bootstrap principle, to generate 50 diagnostic realizations.\cite{Efron1979} This auxiliary calculation uses four radii, $R/h_s=0.2,0.5,1,$ and 3. The resulting intervals quantify diagnostic-regressor ensemble variability; independent DSMC realizations would be required to quantify particle-sampling uncertainty.
+
+Three additional controls probe the dependence of the predictive-support result on diagnostic choices. First, the radius-dependent calculation is repeated with a regularized linear ridge regressor, which is structurally distinct from the tree ensemble. Second, Eq.~(\ref{eq:R95}) is generalized to thresholds $\epsilon=0.025$, 0.05, and 0.10 through $E(R)\le(1+\epsilon)E(\mathrm{ref})$. Third, the full-domain ring-statistics reference is replaced by the largest cumulative neighborhood, $R/h_s=3$, so that the influence of reference-feature construction can be separated from the influence of spatial extent. These controls are used to test the stability of the quantity ordering; they are not used to replace the primary ExtraTrees estimates.
+
+\section{Validation performance}
+Table~\ref{tab:validation} summarizes the main validation results. Temperature and streamwise velocity are the most accurate bulk variables because their dominant structures occupy a broad region of the flow. The transverse velocity is harder because it is smaller in magnitude and controlled by local deflection, weak recirculation, and recovery around the protrusion. Pressure remains more demanding than temperature because the high-pressure region is localized near the windward face and apex. The pressure-focused surrogate nevertheless improves the pressure prediction relative to the multi-output field model. Surface quantities are predicted with split-mean errors of 4.20--5.00\% in Table~\ref{tab:validation}, despite being sharply localized and sampled on a much smaller one-dimensional manifold. Independent same-condition DSMC realizations were not available, so a casewise particle-sampling confidence interval cannot be subtracted from these surrogate errors. The original grid, time-step, particle-per-cell, and sampling checks establish numerical adequacy of the reference database, while the remaining stochastic scatter is retained in the DSMC fields and wall profiles. Accordingly, differences of only a few percent are interpreted as error relative to the sampled DSMC mean rather than as statistically resolved departures from a separately measured DSMC noise floor.
+
+\begin{table}[t]
+\centering
+\caption{Mean validation relative $L_2$ errors in percent for supported hold-out groups.}
+\label{tab:validation}
+\footnotesize
+\begin{tabular}{llccc}
+\toprule
+Surrogate & Output & \shortstack{Mach--rarefaction--\\orientation} & \shortstack{Height\\interpolation} & \shortstack{Wall-temperature\\interpolation} \\
+ & & $\Ma=6,\;\Kn=0.33$ & $h_p/h_s=1.25$ & $T_w/T_\infty=2$ \\
+\midrule
+Smooth field & $T$ & 3.28 & 2.23 & 2.00 \\
+Smooth field & $u$ & 2.17 & 1.34 & 1.44 \\
+Smooth field & $v$ & 4.80 & 4.19 & 3.39 \\
+Pressure-focused & $P$ & 6.37 & 4.80 & 3.11 \\
+Surface-only & $C_p,C_q,|\tau|$ mean & 5.00 & 4.20 & 4.42 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Figures~\ref{fig:T1}-\ref{fig:T3} use a common three-column layout: the left panel is the DSMC temperature field, the center panel is the surrogate prediction, and the right panel is the signed error normalized by the robust DSMC range. The horizontal and vertical axes are the normalized coordinates $\xi=(x-x_{\rm apex})/h_s$ and $\eta=(y-y_b)/h_s$, and the white triangle marks the solid protrusion. The comparison therefore shows both the location of the thermal structure and any displacement introduced by the surrogate. Across the three holdouts, the model reproduces the oblique thermal plume that forms above and upstream of the protrusion. For the Mach--rarefaction--orientation holdout, Table~\ref{tab:validation} gives a temperature relative-$L_2$ error of 3.28\%, and the corresponding contour captures the compression-heated region; the height-interpolation case recovers the altered FWD thermal footprint; and the wall-temperature case preserves the elevated near-wall band and downstream relaxation. Residual error is concentrated near the apex and adjacent compression layer, where small spatial shifts, cut-cell geometry, and DSMC scatter produce the largest pointwise differences.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig03_temperature_BWD_triptych_large.pdf}
+\caption{Temperature validation for the Mach--rarefaction--orientation holdout: BWD protrusion, Mach number 6, Knudsen number 0.33, height ratio 1.5, and wall-temperature ratio 1. Temperature color scales are in kelvin, and the error panel is in percent of the robust DSMC range. The model reproduces the hot region generated by compression upstream of the protrusion; the largest error remains localized near the apex and near-wall recovery region.}
+\label{fig:T1}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig04_temperature_FWD_triptych_large.pdf}
+\caption{Temperature validation for the height-interpolation holdout: FWD protrusion with $h_p/h_s=1.25$ at Mach number 6 and Knudsen number 0.33. Temperature color scales are in kelvin. The FWD windward face generates a compact thermal high upstream of the apex, and the corrected geometry prevents the field from entering the triangular solid.}
+\label{fig:T2}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig05_temperature_ISO_triptych_large.pdf}
+\caption{Temperature validation for the wall-temperature interpolation holdout: ISO protrusion with $T_w/T_\infty=2$ at Mach number 6 and Knudsen number 0.1. Temperature color scales are in kelvin. The surrogate captures both the upstream high-temperature band and its downstream extension, showing that the thermal sensitivity is learned in the sampled wall-temperature direction.}
+\label{fig:T3}
+\end{landscapefigurepage}
+
+Figures~\ref{fig:uval} and \ref{fig:vval} each contain three holdout rows and the same DSMC--prediction--error columns used for temperature; all panels are plotted in $\xi$--$\eta$ coordinates. Figure~\ref{fig:uval} evaluates the streamwise velocity, so its first two columns expose the broad acceleration and deceleration structure and its third column identifies positional error. The model captures the near-wall deceleration pocket, recovery above the protrusion, and outer high-speed region. The largest residuals lie along the near-wall shear layer and apex, where a small displacement of the low-speed region creates a large range-normalized difference. Figure~\ref{fig:vval} applies the same layout to transverse velocity, a smaller deflection-sensitive component. The sign and position of the main upward and downward deflection regions are recovered, while the larger relative error reflects the localization and smaller magnitude of $v$.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig06_streamwise_velocity_BWD_triptych_large.pdf}
+\caption{Streamwise-velocity validation for the Mach--rarefaction--orientation holdout: BWD protrusion, $\Ma=6$, $\Kn=0.33$, $h_p/h_s=1.5$, and $T_w/T_\infty=1$. The large panels show DSMC, prediction, and signed robust-range-normalized error. Velocity scales are in $\mathrm{m\,s^{-1}}$.}
+\label{fig:uval}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig06_streamwise_velocity_FWD_triptych_large.pdf}
+\continuedcaption{Streamwise-velocity validation for the height-interpolation holdout: FWD protrusion, $\Ma=6$, $\Kn=0.33$, $h_p/h_s=1.25$, and $T_w/T_\infty=1$. The model resolves the altered near-wall deceleration and recovery around the forward-facing apex.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig06_streamwise_velocity_ISO_triptych_large.pdf}
+\continuedcaption{Streamwise-velocity validation for the wall-temperature holdout: ISO protrusion, $\Ma=6$, $\Kn=0.1$, $h_p/h_s=1.5$, and $T_w/T_\infty=2$. Residuals remain concentrated in the near-wall and apex-adjacent recovery regions.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig07_transverse_velocity_BWD_triptych_large.pdf}
+\caption{Transverse-velocity validation for the Mach--rarefaction--orientation holdout. The large panels show DSMC, prediction, and signed robust-range-normalized error for the BWD case defined in Fig.~\ref{fig:uval}. This deflection-sensitive component is more responsive to small positional shifts than the streamwise velocity.}
+\label{fig:vval}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig07_transverse_velocity_FWD_triptych_large.pdf}
+\continuedcaption{Transverse-velocity validation for the FWD height-interpolation holdout. The surrogate preserves the sign and location of the principal upward and downward deflection regions.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig07_transverse_velocity_ISO_triptych_large.pdf}
+\continuedcaption{Transverse-velocity validation for the ISO wall-temperature holdout. Remaining differences are localized in the shear layer and recovery region.}
+\end{landscapefigurepage}
+
+Pressure is the most localized bulk output and is treated separately. Figure~\ref{fig:pval} again uses three holdout rows; within each row, the left panel is DSMC pressure, the center panel is the pressure-focused prediction, and the right panel is robust-range-normalized signed error in $\xi$--$\eta$ coordinates. The layout makes the windward compression maximum, its downstream decay, and any spatial shift of the peak directly comparable. The surrogate captures the high-pressure region near the windward face and its downstream decay. The BWD holdout has the largest pressure error because pressure depends nonlinearly on the combined Mach number, Knudsen number, and orientation, whereas the supported height and wall-temperature directions are resolved more accurately. This behavior is consistent with pressure peaks being controlled by orientation-dependent compression and molecular momentum transfer.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig08_pressure_BWD_triptych_large.pdf}
+\caption{Pressure validation for the BWD Mach--rarefaction--orientation holdout. The large panels show DSMC pressure, the pressure-focused prediction, and signed robust-range-normalized error. Pressure scales are in pascals. Logarithmic-pressure training and added emphasis on near-wall and apex-adjacent cells preserve the localized compression maximum.}
+\label{fig:pval}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig08_pressure_FWD_triptych_large.pdf}
+\continuedcaption{Pressure validation for the FWD height-interpolation holdout. The surrogate recovers the compact windward compression high and its abrupt decay across the apex.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig08_pressure_ISO_triptych_large.pdf}
+\continuedcaption{Pressure validation for the ISO wall-temperature holdout. The shared DSMC--prediction scale makes the peak magnitude and spatial displacement directly visible.}
+\end{landscapefigurepage}
+
+\clearpage
+\section{Surface-load prediction}
+The protrusion-wall response is the most direct engineering output of the surrogate because structural load and thermal protection depend on the wall pressure, heat transfer, and shear distribution. Figure~\ref{fig:surface} is organized by validation group in rows and by wall quantity in columns. In every panel, the horizontal axis is the normalized protrusion coordinate running from one base endpoint through the apex near the face transition to the opposite endpoint; the vertical axis is $C_p$, $C_q$, or $|\tau_w|$, and DSMC and surrogate profiles are superposed. This representation tests the complete wall distribution rather than only a peak value. The windward face produces a monotone rise in $C_p$ and $C_q$ toward the apex, followed by a sharp drop on the leeward side. The face-aware wall-surface surrogate captures this asymmetry and preserves the peak location. No post-hoc smoothing is applied to the DSMC wall profiles: the visible point-to-point fluctuations, particularly in $|\tau_w|$, are retained because smoothing could alter the peak magnitude and location that the surrogate is intended to reproduce. Remaining discrepancies are concentrated near the apex and face transition, where the response changes over a short arc length and DSMC statistics are most sensitive to cut-cell geometry and particle sampling. Table~\ref{tab:surface} reports the split-averaged surface errors.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig09_surface_loads_BWD_triptych_large.pdf}
+\caption{Surface-only validation of protrusion-wall $C_p$, $C_q$, and $|\tau_w|$ for the BWD Mach--rarefaction--orientation holdout. DSMC curves are shown without post-hoc smoothing so that particle-sampling fluctuations and localized extrema remain visible.}
+\label{fig:surface}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig09_surface_loads_FWD_triptych_large.pdf}
+\continuedcaption{Surface-only validation for the FWD height-interpolation holdout. The face-aware wall surrogate preserves the windward rise, apex-adjacent maximum, and sharp transition onto the leeward face.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig09_surface_loads_ISO_triptych_large.pdf}
+\continuedcaption{Surface-only validation for the ISO wall-temperature holdout. Agreement remains strongest over the windward rise and peak region that controls pressure and thermal loading.}
+\end{landscapefigurepage}
+
+\begin{table}[t]
+\centering
+\caption{Surface validation summary. Values are relative $L_2$ errors in percent.}
+\label{tab:surface}
+\begin{tabular}{lccc}
+\toprule
+Validation group & $C_p$ & $C_q$ & $|\tau|$ \\
+\midrule
+Mach--rarefaction--orientation holdout & 5.23 & 3.32 & 6.45 \\
+Height-interpolation holdout & 3.83 & 3.12 & 5.65 \\
+Wall-temperature-interpolation holdout & 3.90 & 4.37 & 4.97 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\section{Nonlocal bulk-to-wall observability}
+\subsection{Blind test of finite full-range moments}
+The equal-capacity intermediate-$\Kn$ test provides the first direct answer. Table~\ref{tab:momentgate} reports mean NRMSE over all blind geometry--rarefaction cases and five seeds. Adding $P_{ij}$ to the primitive state reduces the $C_p$ error from 8.87\% to 6.11\%, a relative gain of 31.15\% with a case-and-seed bootstrap interval of 3.83--43.68\%. The gain is physically consistent with pressure being a normal momentum flux. It is nevertheless insufficient for a transferable closure: the parameter baseline remains better at 3.20\%, and adding $q_i$ produces only a small further change. Signed shear behaves more decisively. $S_1$ and $S_2$ increase the error from 35.66\% for $S_0$ to 43.38\% and 45.76\%, respectively. Thus, for these blind intermediate states, the complete full-range stress and heat-flux moments are neither sufficient nor reliably beneficial for wall shear.
+
+\begin{table}[t]
+\centering
+\caption{Equal-capacity blind interpolation from $\Kn=0.1,0.8$ to $\Kn=0.2,0.4$. Values are mean profile NRMSE in percent over three geometries and five seeds. The parameter baseline $P$ contains operating parameters and geometry but no sampled bulk field.}
+\label{tab:momentgate}
+\begin{tabular}{lcccc}
+\toprule
+Target & $P$ & $S_0$ & $S_1=S_0+P_{ij}$ & $S_2=S_1+q_i$ \\
+\midrule
+$C_p$ & 3.20 & 8.87 & 6.11 & 5.84 \\
+Signed $C_f$ & 26.37 & 35.66 & 43.38 & 45.76 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The result cannot be explained away solely as insufficient regressor capacity. A constructive discrete-velocity example, Fig.~\ref{fig:nonunique}, produces two non-negative distributions whose every two-dimensional monomial moment through total degree three agrees to within $6.4\times10^{-16}$, yet whose incident half-range pressure functionals are 0.958723 and 1.034560. A second pair agrees in the same full-range moment set to within $2.3\times10^{-16}$ but has opposite incident half-range shear, $-0.021644$ and $+0.021644$. Consequently, even exact knowledge of this finite full-range hierarchy does not uniquely determine the wall functional. The example establishes pointwise nonuniqueness; the blind DSMC test demonstrates its practical relevance in the sampled flow family.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig10_moment_nonuniqueness_pressure_distributions_partA.pdf}
+\caption{Constructive nonuniqueness of finite full-range moments for the pressure functional. The first pair of positive discrete velocity distributions has identical monomial moments through total degree three but a different incident half-range pressure. The enlarged panels show the two velocity-space distributions.}
+\label{fig:nonunique}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig10_moment_nonuniqueness_pressure_flux_partB.pdf}
+\continuedcaption{Pressure-functional redistribution and half-range profiles for the same pair. The wall is represented by the half-space boundary in velocity space.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig10_moment_nonuniqueness_shear_distributions_partC.pdf}
+\continuedcaption{Velocity-space distributions for the corresponding signed-shear construction.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig10_moment_nonuniqueness_shear_flux_partD.pdf}
+\continuedcaption{Signed-shear redistribution and half-range profiles. The paired positive distributions retain the same finite full-range moments but produce opposite incident half-range shear, establishing that the ambiguity is directional rather than a regression-capacity artifact.}
+\end{landscapefigurepage}
+
+\subsection{Incident half-range sufficiency}
+Figures~\ref{fig:cpmap} and \ref{fig:cfmap} place the DSMC surface tally and $S_{\mathrm{HR}}$ reconstruction directly on the physical protrusion. This is the comparison required for a wall-load claim: the color is attached to the windward and leeward faces rather than plotted only as an abstract error statistic. Across ISO, BWD, and FWD orientations, the normal load rises along the windward face and collapses after the apex; the signed shear retains the orientation-dependent sign and near-apex structure. No wall target is used as an input to $S_{\mathrm{HR}}$; the reconstruction uses incoming molecular velocities and the prescribed diffuse kernel.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_landscape/paper_cp_surface_maps_ISO_landscape.pdf}
+\caption{Physical-wall map of $C_p$ from the co-temporal DSMC surface tally and the incident half-range reconstruction $S_{\mathrm{HR}}$ for the ISO geometry at $\Kn=0.1$ and 0.8. Each row compares DSMC and half-range reconstruction on the actual protrusion, and one color scale is used throughout the complete figure.}
+\label{fig:cpmap}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_landscape/paper_cp_surface_maps_BWD_landscape.pdf}
+\continuedcaption{Physical-wall $C_p$ for the BWD geometry at $\Kn=0.2$ and 0.4. Geometry-specific continuation pages keep the physical faces and color gradients large enough for direct inspection.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_landscape/paper_cp_surface_maps_FWD_landscape.pdf}
+\continuedcaption{Physical-wall $C_p$ for the FWD geometry at $\Kn=0.2$ and 0.4. The windward rise and collapse after the apex are reproduced without using any wall target as an input.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_landscape/paper_cf_surface_maps_ISO_landscape.pdf}
+\caption{Physical-wall map of signed $C_f$ from the co-temporal DSMC surface tally and $S_{\mathrm{HR}}$ for the ISO geometry at $\Kn=0.1$ and 0.8. The diverging scale preserves shear sign; using $|C_f|$ would remove separation- and orientation-relevant information.}
+\label{fig:cfmap}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_landscape/paper_cf_surface_maps_BWD_landscape.pdf}
+\continuedcaption{Physical-wall signed $C_f$ for the BWD geometry at $\Kn=0.2$ and 0.4. The enlarged panels expose the sign, face transition, and near-apex structure directly.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_landscape/paper_cf_surface_maps_FWD_landscape.pdf}
+\continuedcaption{Physical-wall signed $C_f$ for the FWD geometry at $\Kn=0.2$ and 0.4. This is the most noise-sensitive orientation because the windward signed signal is small and changes rapidly near the apex.}
+\end{landscapefigurepage}
+
+The arclength profiles in Figs.~\ref{fig:cpprofiles} and \ref{fig:cfprofiles} quantify the agreement. Co-temporal $C_p$ NRMSE lies between 0.15\% and 0.28\%, with correlation exceeding 0.99999 in every case. Signed $C_f$ NRMSE lies between 1.30\% and 7.35\%; BWD is the most accurate and FWD is the most demanding because its windward shear is small relative to sampling fluctuations and changes rapidly near the apex. Display lines are smoothed separately on each face, but the square/circular markers, confidence bands, NRMSE values, and correlations are unsmoothed.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig13_cp_concurrent_Kn_low_partA.pdf}
+\caption{Co-temporal DSMC and incident half-range $C_p$ along normalized physical wall arclength for the lower-rarefaction cases: ISO at $\Kn=0.1$ and BWD/FWD at $\Kn=0.2$. The dotted line marks the apex and the background identifies windward and leeward faces. Markers are raw binned values; lines use facewise display smoothing; metrics use the raw arrays.}
+\label{fig:cpprofiles}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig13_cp_concurrent_Kn_high_partB.pdf}
+\continuedcaption{Co-temporal $C_p$ for the higher-rarefaction cases: ISO at $\Kn=0.8$ and BWD/FWD at $\Kn=0.4$. The same raw-marker, facewise-smoothing, and unsmoothed-metric conventions are used.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig14_cf_concurrent_Kn_low_partA.pdf}
+\caption{Co-temporal DSMC and incident half-range signed $C_f$ for the lower-rarefaction cases. The 95\% bands use independent time blocks. The half-range reconstruction retains shear sign and the abrupt face transition without smoothing across the apex.}
+\label{fig:cfprofiles}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig14_cf_concurrent_Kn_high_partB.pdf}
+\continuedcaption{Co-temporal signed $C_f$ for the higher-rarefaction cases. Raw markers and uncertainty bands remain visible, while display smoothing is applied separately on the two faces only.}
+\end{landscapefigurepage}
+
+\subsection{Independent-window repeatability}
+Co-temporal agreement is a closure check but can share low-frequency DSMC fluctuations. We therefore compare the five short collision blocks against a separate 40,000-step surface-tally mean in Figs.~\ref{fig:cpind} and \ref{fig:cfind}. Pressure remains within 1.68--2.85\% across all six cases. Backward-facing signed shear remains within 5.42--6.77\%, while FWD errors increase to 16.65--25.09\%. Those FWD values must be read with their DSMC standard-error levels of 13.93--20.70\%; the discrepancy is not clean evidence against the half-range identity because the independent reference itself is poorly resolved for a small signed signal. A 50,000-step, ten-block FWD extension has therefore been launched as a precision follow-up; it is not used in the present numerical claims until its independent validation is complete.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig15_cp_independent_Kn_low_partA.pdf}
+\caption{Incident half-range $C_p$ compared with an independent 40,000-step DSMC surface-tally window for the lower-rarefaction cases. The retained agreement demonstrates that the pressure result is not a co-temporal bookkeeping identity.}
+\label{fig:cpind}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig15_cp_independent_Kn_high_partB.pdf}
+\continuedcaption{Independent-window $C_p$ comparison for the higher-rarefaction cases. Pressure agreement remains within the uncertainty of the separately sampled DSMC reference.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig16_cf_independent_Kn_low_partA.pdf}
+\caption{Incident half-range signed $C_f$ compared with the independent DSMC window for the lower-rarefaction cases. ISO and BWD retain strong profile agreement; FWD deviations grow together with the independent DSMC confidence band and are treated as a precision limitation rather than hidden by absolute shear.}
+\label{fig:cfind}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig16_cf_independent_Kn_high_partB.pdf}
+\continuedcaption{Independent-window signed $C_f$ comparison for the higher-rarefaction cases. The enlarged panels retain sign, raw markers, and uncertainty, making the FWD noise limitation explicit.}
+\end{landscapefigurepage}
+
+\subsection{Secondary spatial-support diagnostic}
+The radius-controlled experiment is retained because it documents where information is distributed in the macroscopic field, but it is no longer the primary evidence for a physical information horizon. Figure~\ref{fig:radiuserror} presents the model-conditional result for $C_p$, $C_q$, and $|\tau|$. In each panel, the horizontal axis moves from the parameter-only baseline to the wall-local descriptor, then through cumulative neighborhoods of increasing $R/h_s$, and finally to the full-domain ring descriptor. The parameter-only errors are 45.47\% for $C_p$, 72.59\% for $C_q$, and 49.11\% for $|\tau|$. The full-domain descriptor reduces the errors to 13.76\% for $C_p$ and 12.89\% for $C_q$, but shear improves only to 31.85\%. Because this absolute shear error is inadequate, a short apparent $R_{95}$ is interpreted only as early saturation of the chosen diagnostic, not as a successful local closure. Table~\ref{tab:radiuserror} reports the same comparison numerically.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig17_bulk_to_wall_error_partA_panels_ab.pdf}
+\caption{Mean leave-one-physical-case-out cross-validation (LOOCV) relative wall-profile error versus model input and observed bulk-field radius for (a) $C_p$ and (b) $C_q$. The gap between parameter-only and bulk-aware models establishes predictive value of the resolved field.}
+\label{fig:radiuserror}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig17_bulk_to_wall_error_partB_panel_c.pdf}
+\continuedcaption{Panel (c) shows $|\tau|$. Its large absolute error prevents a constitutive interpretation of the short apparent support, even where the radius-conditioned curve saturates early.}
+\end{landscapefigurepage}
+
+\begin{table}[t]
+\centering
+\caption{Bulk-to-wall prediction errors and reductions. Values are mean LOOCV relative $L_2$ errors in percent across the 27 independent physical conditions.}
+\label{tab:radiuserror}
+\begin{tabular}{lccccc}
+\toprule
+Quantity & Parameters only & Local & Best finite radius & Full domain & Reduction to full \\
+\midrule
+$C_p$ & 45.47 & 19.51 & 17.54 ($R/h_s=3$) & 13.76 & 69.7\% \\
+$C_q$ & 72.59 & 22.28 & 14.48 ($R/h_s=1.5$) & 12.89 & 82.2\% \\
+$|\tau|$ & 49.11 & 32.47 & 31.11 ($R/h_s=0.75$) & 31.85 & 35.1\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The robustness controls in Table~\ref{tab:robustness} test whether this ordering is produced by one learner, one tolerance, or the ring-based full-domain reference. The ridge control is intentionally lower capacity than the tree ensemble. Its absolute errors are larger, but replacing parameter-only inputs by the full-domain descriptor still reduces the error by 77.0\% for $C_p$, 76.5\% for $C_q$, and 38.4\% for $|\tau|$. The central conclusion that pressure and heat transfer require resolved bulk information therefore survives a structurally different regressor. Within the primary ExtraTrees diagnostic, varying the tolerance from 2.5\% to 10\% shifts the mean support length but preserves the ordering: $C_p$ and $C_q$ remain substantially broader than shear. Replacing the full-domain ring reference by the largest cumulative patch changes the ExtraTrees mean $R_{5\%}/h_s$ only from 1.29 to 1.23 for $C_p$ and from 1.39 to 1.28 for $C_q$. Thus, their broad support is not solely a consequence of the ring reference. The ridge model is more sensitive to the reference construction, especially for $C_q$, which confirms that the numerical value of the horizon remains descriptor- and regressor-conditional even when the load-dependent hierarchy is retained.
+
+\begin{table}[t]
+\centering
+\caption{Compact robustness controls for the predictive-support diagnostic. Error reductions compare parameter-only and full-domain inputs within independently refitted models. Support-length ranges use the full-domain ring reference.}
+\label{tab:robustness}
+\small
+\begin{tabular}{lll}
+\toprule
+\parbox[t]{0.20\textwidth}{Control} & \parbox[t]{0.35\textwidth}{Numerical result} & \parbox[t]{0.34\textwidth}{Interpretation} \\
+\midrule
+\parbox[t]{0.20\textwidth}{ExtraTrees refit} & \parbox[t]{0.35\textwidth}{Error reduction to full domain: $C_p$ 51.2\%, $C_q$ 74.0\%, $|\tau|$ 25.6\%.} & \parbox[t]{0.34\textwidth}{Bulk information remains most beneficial for pressure and heat transfer.} \\
+\parbox[t]{0.20\textwidth}{Ridge refit} & \parbox[t]{0.35\textwidth}{Error reduction to full domain: $C_p$ 77.0\%, $C_q$ 76.5\%, $|\tau|$ 38.4\%.} & \parbox[t]{0.34\textwidth}{The parameter-to-bulk improvement is not specific to a tree ensemble.} \\
+\parbox[t]{0.20\textwidth}{Tolerance sweep} & \parbox[t]{0.35\textwidth}{ExtraTrees $R_{\epsilon}/h_s$ over $\epsilon=2.5$--10\%: $C_p$ 1.14--1.36, $C_q$ 1.29--1.46, $|\tau|$ 0.18--0.23.} & \parbox[t]{0.34\textwidth}{The load-dependent ordering is not tuned to the 5\% threshold.} \\
+\parbox[t]{0.20\textwidth}{Reference control} & \parbox[t]{0.35\textwidth}{ExtraTrees $R_{5\%}/h_s$, full ring / maximum cumulative: $C_p$ 1.29/1.23, $C_q$ 1.39/1.28, $|\tau|$ 0.21/0.38.} & \parbox[t]{0.34\textwidth}{Broad $C_p$ and $C_q$ support is not solely a ring-reference artifact.} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The short apparent shear support must be interpreted together with its much larger absolute error. For $|\tau|$, remote patch information produces little improvement beyond the wall-local model, and weakly informative full-domain features can increase estimator variance in a data-limited fit. A small $R_{95}$ therefore indicates early saturation relative to the same diagnostic reference, not an accurate local closure of shear from the available low-order moments.
+
+Figure~\ref{fig:bulkprofiles} resolves the aggregate errors into representative wall profiles. Rows correspond to backward-facing, forward-facing, and symmetric protrusions; columns correspond to $C_p$, $C_q$, and $|\tau|$. The horizontal axis is normalized surface coordinate and the vertical axis is the relevant wall coefficient. The black curve is DSMC, while the colored curves compare parameter-only, local, finite-radius, and full-domain descriptors. The parameter-only model retains the face transition but introduces substantial windward bias in pressure and heat transfer. Finite bulk patches progressively recover the monotone windward rise, apex-adjacent peak, and abrupt leeward transition. For $C_q$, convergence of the profiles with increasing $R$ explains the systematic decline in Fig.~\ref{fig:radiuserror}. Shear is qualitatively different: its peak shape is sensitive to orientation, local momentum exchange, and DSMC scatter, so the radius-conditioned curves cluster while retaining peak-shape error.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig18_bulk_profiles_BWD_partA.pdf}
+\caption{Representative DSMC and bulk-to-wall predictions for the backward-facing protrusion at $\Ma=6$, $\Kn=0.33$, $h_p/h_s=1.5$, and $T_w/T_\infty=1$. The panels show $C_p$, $C_q$, and $|\tau|$. Increasing the bulk radius progressively recovers the windward rise and apex-adjacent peak.}
+\label{fig:bulkprofiles}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig18_bulk_profiles_FWD_partB.pdf}
+\continuedcaption{Representative profiles for the forward-facing protrusion. Parameter-only pressure and heat-transfer curves retain the face transition but show windward bias; finite bulk patches progressively improve the peak structure.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig18_bulk_profiles_ISO_partC.pdf}
+\continuedcaption{Representative profiles for the symmetric protrusion. Shear remains less identifiable than pressure and heat transfer: radius-conditioned curves cluster while retaining noticeable peak-shape error.}
+\end{landscapefigurepage}
+
+Figure~\ref{fig:closedloopcurves} audits whether reconstructed fields preserve the radius-dependent diagnostic. Its three landscape panels correspond to $C_p$, $C_q$, and $|\tau|$. The horizontal axis uses the same parameter-only, local, finite-radius, and full-domain sequence as Fig.~\ref{fig:radiuserror}; the vertical axis is the median leave-one-physical-case-out relative error over 20 diagnostic seeds. Blue curves use raw DSMC descriptors for the held-out cases, orange curves replace only those descriptors by surrogate-reconstructed fields, and shaded bands show the 2.5--97.5 percentile range across seeds. For $C_p$, the raw and reconstructed full-domain endpoints remain similar despite finite-radius variability. For $C_q$, the reconstructed input preserves the broad decrease with radius but adds error, most clearly in the forward-facing holdout. Shear exhibits weaker radius dependence and the largest closed-loop degradation for the forward-facing geometry. Preservation is therefore quantity- and orientation-dependent, with the raw-DSMC diagnostic retained as the reference.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig19_closed_loop_partA_panels_ab.pdf}
+\caption{Closed-loop preservation of radius-dependent wall-load error for (a) $C_p$ and (b) $C_q$. Diagnostic regressors are trained only on raw DSMC descriptors from non-held-out cases. Blue curves use raw DSMC descriptors, whereas orange curves replace only the held-out bulk field by its coordinate-conditioned surrogate reconstruction; bands show the 2.5--97.5 percentile range over 20 seeds.}
+\label{fig:closedloopcurves}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig19_closed_loop_partB_panel_c.pdf}
+\continuedcaption{Panel (c) gives the signed-shear closed-loop audit. Shear has weaker radius dependence and the largest reconstruction-induced degradation for the forward-facing geometry.}
+\end{landscapefigurepage}
+\clearpage
+
+Table~\ref{tab:closedloop} gives the casewise preservation audit. Censoring agreement is 1.00 for backward-facing $C_q$ and for the backward-facing and symmetric shear tests, while the symmetric and forward-facing $C_q$ values are 0.60 and 0.65. Median changes in $R_{95}$ are generally $0$--$0.6h_s$, with wider intervals when either input lies near the censoring boundary. Full-domain error changes are modest for most pressure and heat-transfer cases; the principal exceptions are forward-facing $C_q$ (8.11 percentage points) and forward-facing shear (12.55 percentage points). These results identify where the surrogate preserves the coarse predictive-support geometry and where apex-localized reconstruction error modifies it; the raw-DSMC diagnostic remains the reference definition.
+
+\begin{table}[t]
+\centering
+\caption{Closed-loop preservation of the model-conditional information footprint. $\Delta R_{95}$ is surrogate minus raw DSMC in units of $h_s$; $\Delta E_{\rm full}$ is the increase in full-domain relative error in percentage points. Brackets give 2.5--97.5 percentile intervals over 20 diagnostic random seeds.}
+\label{tab:closedloop}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llccc}
+\toprule
+Orientation & Quantity & Censoring agreement & Median $\Delta R_{95}/h_s$ [interval] & Median $\Delta E_{\rm full}$ [interval] \\
+\midrule
+Backward-facing & $C_p$ & 0.55 & $0.00$ [$-2.19,2.42$] & $-4.11$ [$-7.02,-2.26$] \\
+Backward-facing & $C_q$ & 1.00 & $0.50$ [$-0.26,0.88$] & $2.62$ [$-0.49,4.23$] \\
+Backward-facing & $|\tau|$ & 1.00 & $0.15$ [$0.05,0.31$] & $4.49$ [$2.44,6.17$] \\
+Forward-facing & $C_p$ & 0.80 & $0.00$ [$-2.80,0.00$] & $1.46$ [$-0.63,3.64$] \\
+Forward-facing & $C_q$ & 0.65 & $0.63$ [$-1.66,2.66$] & $8.11$ [$5.36,11.94$] \\
+Forward-facing & $|\tau|$ & 0.95 & $0.30$ [$0.15,2.00$] & $12.55$ [$7.15,17.10$] \\
+Symmetric & $C_p$ & 0.80 & $1.00$ [$-2.33,1.50$] & $0.47$ [$-0.74,2.86$] \\
+Symmetric & $C_q$ & 0.60 & $0.00$ [$-1.76,0.50$] & $2.33$ [$1.07,5.51$] \\
+Symmetric & $|\tau|$ & 1.00 & $0.15$ [$0.05,0.15$] & $2.12$ [$-0.11,3.90$] \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+Figure~\ref{fig:R95Kn} summarizes the casewise horizons as functions of Knudsen number. The horizontal axis is $\Kn$; the vertical axis is the orientation-specific lower-bound mean $R_{95}/h_s$ after averaging over Mach number. Separate curves represent backward-facing, forward-facing, and symmetric geometries. Filled symbols denote finite horizons, while an open overlay marks a Knudsen-number/orientation group containing at least one case right-censored at $R/h_s=3$. Across all 27 cases, 13 pressure and 6 heat-transfer horizons are right-censored, whereas every shear case reaches the threshold. The result is therefore a quantity-dependent observability hierarchy: pressure and heat transfer frequently require support comparable to the protrusion width or larger, while shear reaches shorter radii but is less accurately inferred. Tables~\ref{tab:R95summary} and \ref{tab:R95censored} retain the censoring information explicitly.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig20_information_horizon_kn_partA_panels_ab.pdf}
+\caption{Knudsen-number dependence of the lower-bound information horizon for (a) $C_p$ and (b) $C_q$. Curves are orientation-specific means over Mach number; right-censored cases are assigned $R_{95}/h_s=3$ for plotting and are enumerated in Tables~\ref{tab:R95summary} and \ref{tab:R95censored}.}
+\label{fig:R95Kn}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig20_information_horizon_kn_partB_panel_c.pdf}
+\continuedcaption{Panel (c) gives the signed-shear lower-bound horizon. The variation is interpreted as model-conditional predictive support rather than as a universal Knudsen-number scaling.}
+\end{landscapefigurepage}
+
+\begin{table}[t]
+\centering
+\caption{Casewise information-horizon statistics by wall quantity and orientation. Censored cases satisfy $R_{95}/h_s>3$; the lower-bound mean assigns them the value $3$ and is therefore conservative. The reported horizons are single-fit point estimates; the diagnostic-regressor uncertainty for $C_q$ is wide and reaches the censoring limit for the backward-facing orientation (Fig.~\ref{fig:R95uq}), so the trailing digit should not be read as statistically resolved.}
+\label{tab:R95summary}
+\begin{tabular}{llccc}
+\toprule
+Quantity & Orientation & Finite $R_{95}$ cases & Censored cases & Lower-bound mean $R_{95}/h_s$ \\
+\midrule
+$C_p$ & Backward-facing & 5/9 & 4/9 & 1.5 \\
+$C_p$ & Forward-facing & 4/9 & 5/9 & 1.7 \\
+$C_p$ & Symmetric & 5/9 & 4/9 & 1.6 \\
+$C_q$ & Backward-facing & 7/9 & 2/9 & 1.7 \\
+$C_q$ & Forward-facing & 6/9 & 3/9 & 1.4 \\
+$C_q$ & Symmetric & 8/9 & 1/9 & 1.0 \\
+$|\tau|$ & Backward-facing & 9/9 & 0/9 & 0.6 \\
+$|\tau|$ & Forward-facing & 9/9 & 0/9 & 0.3 \\
+$|\tau|$ & Symmetric & 9/9 & 0/9 & 0.2 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Lower-bound mean information horizon $R_{95}/h_s$ after retaining right-censored cases at the tested lower bound $R/h_s=3$. The Mach-number columns average over Knudsen number and orientation; the Knudsen-number columns average over Mach number and orientation. These are lower-bound averages; the underlying right-censored fractions are reported in Table~\ref{tab:R95censored}, and trailing digits are not statistically resolved.}
+\label{tab:R95MaKn}
+\begin{tabular}{lcccccc}
+\toprule
+& \multicolumn{3}{c}{Mach number} & \multicolumn{3}{c}{Knudsen number} \\
+Quantity & 4 & 6 & 8 & 0.10 & 0.33 & 0.80 \\
+\midrule
+$C_p$ & 2.54 & 1.52 & 0.72 & 1.40 & 1.68 & 1.69 \\
+$C_q$ & 1.68 & 1.39 & 0.97 & 1.55 & 1.01 & 1.48 \\
+$|\tau|$ & 0.68 & 0.31 & 0.07 & 0.07 & 0.35 & 0.64 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Right-censored fraction (cases with $R_{95}/h_s>3$, out of nine) underlying Table~\ref{tab:R95MaKn}. Because the censored fraction for $C_p$ and $C_q$ decreases with Mach number, part of the apparent Mach-number decrease of the lower-bound horizon in Table~\ref{tab:R95MaKn} is a censoring effect rather than a true shortening; no $|\tau|$ case is censored at any condition.}
+\label{tab:R95censored}
+\begin{tabular}{lcccccc}
+\toprule
+& \multicolumn{3}{c}{Mach number} & \multicolumn{3}{c}{Knudsen number} \\
+Quantity & 4 & 6 & 8 & 0.10 & 0.33 & 0.80 \\
+\midrule
+$C_p$    & 7/9 & 4/9 & 2/9 & 4/9 & 4/9 & 5/9 \\
+$C_q$    & 3/9 & 2/9 & 1/9 & 3/9 & 2/9 & 1/9 \\
+$|\tau|$ & 0/9 & 0/9 & 0/9 & 0/9 & 0/9 & 0/9 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Averaging over the other two factors gives the compact trends in Table~\ref{tab:R95MaKn}, with the corresponding right-censored fractions in Table~\ref{tab:R95censored}. The lower-bound horizon decreases with Mach number for all three wall quantities in this sampled block, but the mechanism differs by quantity. For shear, no case is right-censored at any Mach number, so the decrease reflects a genuine shortening of the predictive support: faster flow geometrically concentrates the near-wall momentum structure and makes the local neighborhood more discriminative. For pressure and heat transfer, part of the apparent decrease is a censoring effect. The right-censored fraction falls with Mach number from 7/9 to 4/9 to 2/9 of the nine $C_p$ cases; the corresponding $C_q$ fractions are 3/9, 2/9 and 1/9 at Mach 4, 6 and 8. The lower-bound average therefore drops partly because fewer cases are pinned at the $R/h_s=3$ ceiling rather than because every true horizon shortens. These values are interpreted as lower-bound trends, not as a quantitative Mach-number scaling for $C_p$ or $C_q$. Rarefaction produces a different response for each quantity. The shear horizon grows steadily with Knudsen number, consistent with a wider ballistic influence on near-wall momentum transfer. Averaged over orientation and Mach number, the heat-transfer horizon is nonmonotone and reaches its largest values at the lowest and highest Knudsen numbers. The pressure horizon increases only modestly from $\Kn=0.1$ to 0.33--0.8. This trend does not conflict with the previously reported nonmonotonic heat-transfer coefficient: $C_q$ measures load amplitude, whereas $R_{95}$ measures the spatial support required by the fixed diagnostic to predict the full $C_q$ profile. The two quantities need not vary in the same direction. These averages combine orientation-specific behavior, and several pressure and heat-transfer cases are right-censored; they should not be interpreted as universal scaling laws.
+
+The orientation dependence is physically interpretable but not reducible to a single monotone law. Pressure responds to the spatially extended compression and deflection pattern, which explains the frequent domain-scale censoring. Heat-transfer loading requires the thermal and velocity history feeding the windward face, so it exhibits the clearest systematic benefit from increasing radius. Shear is dominated by near-wall momentum transfer and therefore reaches its full-domain accuracy at shorter radii, but its absolute predictive error remains larger because the target is sharp, orientation-sensitive, and statistically noisy. These findings identify a predictive-support footprint rather than a universal material length. Because the present descriptors contain neighborhood statistics, extrema, and estimated gradients rather than direct point-sensor readings, the footprint should be viewed as a candidate computational or measurement domain. A subsequent study must still define the observation type and solve a formal sensor-placement problem within that domain.
+
+Figure~\ref{fig:R95uq} displays diagnostic-regressor sensitivity for $C_q$. The horizontal axis is Knudsen number, the vertical axis is the orientation-specific lower-bound mean $R_{95}/h_s$, symbols show bootstrap medians, and vertical bars span the 2.5--97.5 percentile range from 50 tree-resampled ensembles. The medians remain of order $h_s$, while the intervals are wide, particularly for backward-facing cases whose upper limits reach the censoring boundary. The symmetric orientation shows the clearest median increase, from approximately $0.43h_s$ at $\Kn=0.10$ to $1.67h_s$ at $\Kn=0.80$, and the forward-facing medians rise more gradually. The bootstrap therefore resolves an order-$h_s$, quantity-dependent heat-transfer footprint, while the interval widths do not support fine monotonic scaling with Knudsen number.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig21_R95_UQ_partA_panels_ab.pdf}
+\caption{Tree-bootstrap sensitivity of the lower-bound heat-transfer information horizon for the first two orientation panels. Points show the median orientation-specific mean $R_{95}/h_s$ and bars show 2.5--97.5 percentile intervals from 50 bootstrap resamples of the diagnostic trees.}
+\label{fig:R95uq}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig21_R95_UQ_partB_panel_c.pdf}
+\continuedcaption{The remaining orientation panel. The reduced uncertainty experiment uses $R/h_s=0.2,0.5,1,$ and 3 and quantifies diagnostic-regressor uncertainty only, not independent DSMC particle-sampling uncertainty.}
+\end{landscapefigurepage}
+
+\section{Physics-aware post-processing}
+Field contours alone are not sufficient for evaluating a surrogate for rarefied hypersonic protrusion flow. A visually smooth field can still miss wall loads, peak locations, or thermodynamic consistency. We therefore compute engineering quantities of interest (QoIs), region-conditioned errors, and an entropy-index diagnostic. The legacy 57-condition field archive used in this section contains macroscopic variables but not the velocity distributions exported by the new kinetic pilot. Consequently, we do not claim to compute Boltzmann entropy production from the legacy archive. Instead, for a monatomic gas we define a local-equilibrium entropy-rise proxy,
+\begin{equation}
+ \frac{\Delta s_{\rm eq}}{R}=\frac{\gamma}{\gamma-1}\ln\left(\frac{T}{T_{\rm ref}}\right)-\ln\left(\frac{P}{P_{\rm ref}}\right), \qquad \gamma=\frac{5}{3},
+\end{equation}
+where $T_{\rm ref}$ and $P_{\rm ref}$ are estimated from an upstream/outer DSMC region for each case. This diagnostic uses the temperature from the smooth-field surrogate and the pressure from the pressure-focused surrogate, so it checks whether two separately trained decoders remain thermodynamically compatible.
+
+Figures~\ref{fig:entropy1} and \ref{fig:entropy2} compare the DSMC entropy index, the index reconstructed from the independent temperature and pressure surrogates, and their robust-range-normalized percent difference for all three protrusion orientations. The horizontal and vertical axes are $\xi$ and $\eta$, and the triangular solid is masked. To keep the field structure readable at journal scale, the maps display $0\leq\eta\leq4$, which contains the protrusion, compression layer, and near-wall recovery region; every metric in Table~\ref{tab:entropy} is nevertheless evaluated on the complete available gas field. This layout tests both the spatial entropy-rise pattern and compatibility of the separately trained decoders. The DSMC and reconstructed maps contain the same high-entropy band associated with compression and thermalization, while the largest residuals occur near the apex and near-wall recovery region where temperature and pressure gradients are steep. Table~\ref{tab:entropy} shows that the range-scaled mean absolute error remains below 3.3\% for every validation group.
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig22_entropy_orientation_BWD_partA_DSMC-prediction_large.pdf}
+\caption{Local-equilibrium entropy-rise proxy for the BWD Mach--rarefaction--orientation validation case: DSMC and the proxy reconstructed from independently predicted temperature and pressure. The solid triangle is masked.}
+\label{fig:entropy1}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig22_entropy_orientation_BWD_partB_error_large.pdf}
+\continuedcaption{BWD signed robust-range-normalized error. Differences remain localized near the apex and near-wall recovery region.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig22_entropy_orientation_FWD_partA_DSMC-prediction_large.pdf}
+\continuedcaption{FWD DSMC and reconstructed entropy-rise proxy. The reconstructed field retains the compression- and thermalization-associated high-entropy band.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig22_entropy_orientation_FWD_partB_error_large.pdf}
+\continuedcaption{FWD signed robust-range-normalized error.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig22_entropy_orientation_ISO_partA_DSMC-prediction_large.pdf}
+\continuedcaption{ISO DSMC and reconstructed entropy-rise proxy.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig22_entropy_orientation_ISO_partB_error_large.pdf}
+\continuedcaption{ISO signed robust-range-normalized error. The largest differences remain localized near the apex and near-wall recovery region.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig23_entropy_height_BWD_partA_DSMC-prediction_large.pdf}
+\caption{Local-equilibrium entropy-rise proxy for the BWD height-interpolation validation case: DSMC and reconstruction. The comparison tests whether separately trained temperature and pressure surrogates remain mutually consistent in a thermodynamic post-processing diagnostic.}
+\label{fig:entropy2}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig23_entropy_height_BWD_partB_error_large.pdf}
+\continuedcaption{BWD signed robust-range-normalized error.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig23_entropy_height_FWD_partA_DSMC-prediction_large.pdf}
+\continuedcaption{FWD DSMC and reconstructed entropy-rise proxy. The main entropy-rise structure and its displacement with protrusion height are reproduced.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig23_entropy_height_FWD_partB_error_large.pdf}
+\continuedcaption{FWD signed robust-range-normalized error.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig23_entropy_height_ISO_partA_DSMC-prediction_large.pdf}
+\continuedcaption{ISO DSMC and reconstructed entropy-rise proxy.}
+\end{landscapefigurepage}
+
+\begin{landscapefigurepage}
+\centering
+\landscapegraphic{revision_large/fig23_entropy_height_ISO_partB_error_large.pdf}
+\continuedcaption{ISO signed robust-range-normalized error. Residuals remain concentrated where the separately reconstructed pressure and temperature gradients are steepest.}
+\end{landscapefigurepage}
+
+\begin{table}[t]
+\centering
+\caption{Entropy-index and peak-location validation. $S$ denotes $\Delta s_{\rm eq}/R$; range mean absolute error is normalized by the robust DSMC entropy range.}
+\label{tab:entropy}
+\footnotesize
+\begin{tabular}{lccccc}
+\toprule
+Validation group & \shortstack{$\relLtwo(S)$\\(\%)} & \shortstack{Range mean\\absolute error (\%)} & \shortstack{$|\Delta T_{\max}|$\\(K)} & $|\Delta P_{\max}|$ & \shortstack{$d_{\rm peak}(P)$\\normalized} \\
+\midrule
+Mach--rarefaction--orientation & 9.01 & 3.27 & 10.86 & 0.77 & 0.136 \\
+Height interpolation & 6.77 & 2.10 & 20.17 & 1.38 & 0.158 \\
+Wall-temperature interpolation & 5.43 & 1.82 & 8.71 & 0.64 & 0.113 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Region-conditioned errors are reported in Table~\ref{tab:region}. The near-wall and near-apex zones are more difficult than the outer flow, especially for transverse velocity and entropy. This is physically expected because near-wall velocity and entropy depend on gas-surface interaction, cut-cell geometry, and local particle statistics. The compression-region pressure error remains larger than the global average, confirming that pressure is the most demanding field and justifying the separate pressure surrogate. The table replaces the heat-map visualization used in earlier drafts; numerical values are clearer and more useful for a Physics of Fluids-style paper.
+
+\begin{table}[t]
+\centering
+\caption{Selected region-conditioned relative $L_2$ errors in percent.}
+\label{tab:region}
+\begin{tabular}{llccccc}
+\toprule
+Validation group & Region & $u$ & $v$ & $T$ & $P$ & $S$ \\
+\midrule
+Mach--rarefaction--orientation & all & 1.39 & 5.30 & 3.58 & 6.35 & 9.01 \\
+Mach--rarefaction--orientation & near apex & 4.14 & 7.94 & 5.96 & 8.25 & 16.74 \\
+Mach--rarefaction--orientation & near wall & 8.57 & 21.11 & 6.62 & 3.98 & 21.25 \\
+Height interpolation & all & 0.92 & 4.37 & 2.58 & 4.74 & 6.77 \\
+Height interpolation & near apex & 4.72 & 8.18 & 4.17 & 6.61 & 11.49 \\
+Wall-temperature interpolation & all & 0.99 & 3.73 & 2.28 & 3.36 & 5.43 \\
+Wall-temperature interpolation & near wall & 8.45 & 21.83 & 5.45 & 2.83 & 13.11 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The engineering QoI tests provide a compact way to evaluate whether the surrogate preserves peaks and integrated loads rather than only cell-wise error. Table~\ref{tab:qoi} reports parity coefficients for representative field, entropy, and surface quantities. Mean temperature, mean pressure, mean speed, peak temperature, and peak pressure are reproduced with high parity. The peak entropy-index statistic is excluded from Table~\ref{tab:qoi}: its low parity ($R^2=0.272$) shows that a single localized maximum is unstable under DSMC scatter even when the global entropy structure is reproduced. Surface QoIs show particularly strong parity because the face-aware wall-surface surrogate is trained directly on the wall profiles and preserves both the windward rise and apex peak.
+
+\begin{table}[t]
+\centering
+\caption{Coefficient of determination between DSMC-derived and predicted engineering QoIs. Values close to one indicate strong parity.}
+\label{tab:qoi}
+\begin{tabular}{lcc@{\qquad}lcc}
+\toprule
+Field/entropy QoI & Symbol & $R^2$ & Surface QoI & Symbol & $R^2$ \\
+\midrule
+Peak temperature & $T_{\max}$ & 0.992 & Peak pressure coefficient & $C_{p,\max}$ & 0.999 \\
+Peak pressure & $P_{\max}$ & 0.987 & Peak heat-transfer coefficient & $C_{q,\max}$ & 0.998 \\
+Mean temperature & $\overline{T}$ & 0.997 & Peak shear magnitude & $|\tau|_{\max}$ & 1.000 \\
+Mean pressure & $\overline{P}$ & 1.000 & Integrated pressure coefficient & $\int C_p\,ds$ & 0.999 \\
+Mean speed & $\overline{|\mathbf{u}|}$ & 0.998 & Integrated heat-transfer coefficient & $\int C_q\,ds$ & 0.995 \\
+Mean entropy index & $\overline{S}$ & 0.977 & Integrated shear magnitude & $\int |\tau|\,ds$ & 0.996 \\
+
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Physical interpretation and implications}
+The central physical result is a distinction between spatial availability and velocity-space sufficiency. A gas cell may lie close to the wall and contain accurately resolved density, velocity, temperature, stress, and heat flux, yet those full-range moments combine populations moving toward and away from the surface. Equation~(\ref{eq:walltraction}) acts only on the incident half range before the wall kernel generates the outgoing population. The blind DSMC test and the constructive example show that this compression can erase wall-relevant information, most visibly for signed shear. Conversely, $S_{\mathrm{HR}}$ succeeds across orientation and rarefaction because it retains exactly the directional molecular state on which the wall functional acts.
+
+This distinction matters beyond the present protrusion. A kinetic--continuum coupling algorithm that passes only primitive fields to a wall model may be well posed for equilibrium-like conditions yet underdetermined in a Knudsen layer. Adding the complete stress tensor can improve normal traction, as the $S_1$ pressure result demonstrates, without making tangential traction transferable. A learned wall closure should therefore be judged not only by network error but by the sufficiency of its interface state. Practical alternatives to storing every collision include compact half-range quadratures, incoming-distribution bases, or learned directional moments constrained to reproduce the wall functionals. The present $S_{\mathrm{HR}}$ is an oracle benchmark for designing such reduced states, not a proposal to use collision tallies as an operational sensor.
+
+The earlier spatial analysis remains informative after this correction in emphasis. A wall point can be geometrically close to a gas cell yet depend on a wider compression or thermal neighborhood. The strong reduction from parameter-only to bulk-aware models demonstrates that the resolved field carries load-relevant information beyond Mach number, Knudsen number, and orientation. However, the absolute-error gate is decisive: the apparent heat-transfer and pressure support is useful as a predictive-domain diagnostic, while the 31.85\% full-domain $|\tau|$ error makes its short $R_{95}$ physically noncommittal. The nonmonotonic finite-radius curves and censored pressure cases are retained as model behavior rather than promoted to a universal material length.
+
+A consistency check between the two parts of the study deserves explicit comment. In the closed-loop test (Table~\ref{tab:closedloop}), $C_q$ footprint preservation is strong for the backward-facing orientation (censoring agreement $1.00$) but degrades for the symmetric and forward-facing orientations ($0.60$ and $0.65$), and the forward-facing case carries the largest heat-transfer full-domain error inflation ($8.11$ percentage points), exceeded only by forward-facing shear ($12.55$ percentage points). The same orientation is also the most statistically demanding independent-window $C_f$ case. Both observations point to the compact apex compression and small signed tangential signal as the limiting structures. The half-range calculation resolves the information content of the incident molecules; the closed-loop test separately shows whether a smooth field surrogate preserves enough of that structure for a downstream diagnostic. Conflating these two questions would hide the most important limitation of the original model.
+
+The connection to sparse sensing is prospective rather than direct. Existing reconstruction studies optimize point sensors to recover a complete field from limited measurements, whereas the present descriptors are engineered neighborhood summaries used to recover a lower-dimensional engineering output.\cite{Manohar2018,Fukami2021Sparse,Santos2023Senseiver,Williams2024SHRED,Kong2025CrossAttention,Wang2025Generative,Zhang2026Sparse,Liang2026Sensor} The identified footprint can therefore restrict a future candidate region, but it does not by itself prescribe sensor number, type, or placement. A dedicated study would need point-observation baselines, an explicit sensor model, and independent DSMC realizations for uncertainty calibration.
+
+The validation results are consistent with the DSMC physics of triangular protrusions. FWD protrusions are the most demanding orientation because the incoming flow meets a steeper windward face earlier, producing stronger compression and larger pressure and heat-transfer peaks. In a continuum interpretation this would be described as a strong obstacle-induced compression layer; in the rarefied setting the same effect is mediated by molecular trajectories and wall accommodation. The surrogate captures the dominant response but still shows its largest errors where the compression layer impinges on the apex, which is the correct physical location for difficulty.
+
+Height changes the effective obstruction and the size of the separated or recirculating region. The reference DSMC study already characterized the associated orientation-dependent vortices: forward-facing cases concentrate recirculation on the windward side, backward-facing cases emphasize the leeward wake, and the symmetric protrusion develops a stronger recirculating region as height increases. We therefore use vortex topology as physical context for the load footprints rather than duplicating that established classification with another contour set. The height-sweep validation at $h_p/h_s=1.25$ lies inside the sampled height range and tests whether the model can interpolate the growth of the thermal and pressure footprints. The model performs well in this case because, over the sampled interval, the original DSMC study reports nearly monotone and approximately low-order sensitivity of the peak quantities to height. The model should not be interpreted as learning arbitrary height-Mach interaction, because such combinations were not sampled. Wall temperature affects energy accommodation and near-wall thermal exchange. Increasing wall temperature raises the local gas temperature while reducing the heat-transfer coefficient when the wall becomes closer to the gas temperature. The wall-temperature holdout at $T_w/T_\infty=2$ confirms that the surrogate captures this supported thermal direction, with low errors in temperature and pressure and moderate errors in heat-transfer coefficient.
+
+Rarefaction changes the balance between collision-mediated transport and ballistic molecular motion. Increasing Knudsen number reduces pressure loading and drag in the DSMC database while changing the thickness and location of thermal structures. The Mach-rarefaction-orientation block is therefore the strongest and most stringent validation block, because it contains the full factorial interaction of Mach number, Knudsen number, and orientation. The pressure error is largest there because pressure responds nonlinearly to both compression and rarefaction. This observation is not a weakness of the framework; it explains why pressure was separated into its own specialized head.
+
+The ablation summary in Table~\ref{tab:ablation} documents the design decisions. The most important result is that geometry correction is not optional. The wrong base interpretation creates artificial solid regions and corrupts both field and surface representations. The second result is that pressure and surface loads require dedicated decoders. These choices follow from the physics of localized compression and wall loading, rather than from arbitrary neural-network tuning.
+
+
+\begin{table}[t]
+\centering
+\caption{Ablation and design-decision summary.}
+\label{tab:ablation}
+\footnotesize
+\begin{tabular}{p{0.20\textwidth} p{0.51\textwidth} p{0.19\textwidth}}
+\toprule
+Design choice & Observed effect & Decision \\
+\midrule
+Bounding-box extrema as base endpoints & Creates artificial right-triangle geometry for forward- and backward-facing cases and contaminates masks, distance features, and contours. & Rejected \\
+Fixed base plus orientation-specific apex & Recovers the DSMC geometry and removes nonphysical solid-region artifacts. & Used \\
+Single multi-output field model for pressure & Under-resolves localized peak compression; the Mach--rarefaction--orientation pressure error remains about 8.82\%. & Baseline \\
+Pressure-focused logarithmic model & Reduces the Mach--rarefaction--orientation pressure error to 6.37\% and improves the compression-region structure. & Used \\
+Unified field/surface model & Smooths surface peaks because sparse wall samples are diluted by the much larger gas-cell data set. & Rejected \\
+Face-aware surface-only model & Preserves windward/leeward asymmetry and predicts $C_p$, $C_q$, and $|\tau|$ at about 4--5\% mean error. & Used \\
+Finite full-range hierarchy $S_0$--$S_2$ & $P_{ij}$ improves blind $C_p$ relative to primitives, but no finite state improves transferable signed shear and none establishes uniqueness. & Insufficient for traction closure \\
+Incident half-range state $S_{\mathrm{HR}}$ & Recovers co-temporal $C_p$ within 0.15--0.28\% and signed $C_f$ within 1.30--7.35\%, with independent-window pressure confirmation. & Sufficiency benchmark \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\section{Scope of validity}
+The framework provides a verified surrogate, a finite-moment transfer test, and a direct half-range sufficiency benchmark for the sampled rarefied protrusion problem. The strongest conclusion is conditional on a known fully diffuse wall kernel and two-dimensional monatomic argon at Mach number 6. $S_{\mathrm{HR}}$ is sampled at the wall, so its success establishes information sufficiency but not a deployable bulk sensor. A practical closure must approximate the incoming half-range state from information available at a finite distance from the surface. The constructive example proves nonuniqueness for moments through degree three at a point; it does not prove that every spatial field of finitely many moments is non-identifying. The blind intermediate-$\Kn$ test supplies empirical evidence for that practical limitation in the present geometry family.
+
+DSMC uncertainty is treated explicitly but is not exhausted. Co-temporal blocks provide a closure-consistency test, and independent 40,000-step windows provide a stronger repeatability test. The independent pressure result is resolved. Backward-facing shear is also resolved within 5.42--6.77\%, whereas forward-facing shear remains comparable to its 13.93--20.70\% DSMC standard-error level. The ongoing longer FWD calculation is therefore a precision extension, not a hidden prerequisite for the pressure conclusion. No result from that active calculation is included here.
+
+The numerical value of $R_{95}$ remains conditional on $\{u,v,T,\log P\}$, patch statistics, regressor family, tolerance, and right-censoring at $R/h_s=3$. The ridge, threshold, and reference controls preserve the load-dependent ordering, but the large absolute shear error prevents a physical local-closure claim. The sampled height and wall-temperature sweeps are restricted to Mach number 6 and do not include simultaneous nonbaseline combinations. The entropy quantity remains a local-equilibrium compatibility diagnostic for the legacy macroscopic archive. Three-dimensional protrusions, internal molecular modes, chemistry, non-diffuse scattering kernels, and a reduced half-range representation are natural extensions.
+
+\section{Conclusions}
+This work determines when a rarefied bulk state contains enough information to recover wall traction over triangular protrusions. Geometry-consistent coordinate-conditioned surrogates preserve the original 57-condition field and wall interpolation study through output-specific models. On supported holdouts, errors remain 2.0--3.3\% for temperature and 1.3--2.2\% for streamwise velocity. Pressure errors are 3.1--6.4\%, while direct wall-load prediction remains at approximately 4--5\%. These results establish data integrity and a useful emulator, but do not by themselves establish a physical wall closure.
+
+The new moment hierarchy supplies the missing test. In blind interpolation from $\Kn=0.1,0.8$ to 0.2 and 0.4, the full momentum-flux tensor reduces $C_p$ error by 31.15\% relative to primitive fields, with a 3.83--43.68\% bootstrap interval. Nevertheless, the parameter baseline remains more accurate, and neither $P_{ij}$ nor $q_i$ improves transferable signed shear. A constructive pair of positive distributions then shows why: every full-range monomial moment through degree three can be identical while the half-range pressure differs and the half-range shear changes sign. The difficulty is therefore not merely that one network was too small; the chosen state can be non-identifying.
+
+The incident half-range state resolves that ambiguity. Combining pre-collision molecular velocities with the known diffuse-wall kernel reconstructs co-temporal $C_p$ with 0.15--0.28\% NRMSE and signed $C_f$ with 1.30--7.35\% NRMSE across ISO, BWD, and FWD protrusions. Independent 40,000-step comparisons retain 1.68--2.85\% pressure error. Backward-facing shear remains at 5.42--6.77\%; forward-facing shear is 16.65--25.09\%, but its independent DSMC standard-error level is already 13.93--20.70\%. Pressure sufficiency is therefore established within this pilot, while the most demanding FWD shear case requires longer averaging for a sharper independent-window statement.
+
+The spatial $R_{95}$ analysis is retained with a narrower interpretation. Full-domain macroscopic descriptors strongly improve $C_p$ and $C_q$, demonstrating distributed predictive information, but the 31.85\% full-domain $|\tau|$ error invalidates any claim that its short apparent horizon is an accurate local constitutive scale. The closed-loop and bootstrap controls document model behavior and uncertainty; they no longer carry the principal physical claim.
+
+The broader implication is operational. A transferable kinetic wall model must preserve directional incoming information, not only scalar pressure or a finite collection of full-range moments. $S_{\mathrm{HR}}$ provides an upper-bound representation against which reduced half-range quadratures, directional-moment closures, and kinetic--continuum interface states can be designed. Future work should finish the long FWD shear precision run, test non-diffuse kernels, learn a compact incoming-state representation one mean free path away from the wall, and evaluate whether that representation transfers to steps, nozzles, and three-dimensional protrusions.
+
+
+\clearpage
+\appendix
+\section{DSMC execution metadata and reproducibility}
+\label{app:dsmc_execution}
+Reproduction of the reference database requires the physical-condition keys together with the numerical scale of each particle calculation. The execution-accounting sheet supplied for this study contains 51 run records. For every run, it specifies the Knudsen and Mach numbers along with protrusion orientation, height ratio $h_p/h_s$ and wall-temperature ratio $T_w/T_\infty$. It also records the instantaneous particle population, central processing unit (CPU) core allocation, reported runtime and normalized time step $\Delta t/\tau_{\rm coll}$. The record covers the complete 27-case Mach-number--Knudsen-number--orientation block used for the central observability analysis. It also includes 12 height-sweep runs at $h_p/h_s=1.0$ and $1.25$, plus 12 wall-temperature-sweep runs at $T_w/T_\infty=2$ and $4$. Table~\ref{tab:dsmc_execution} gives a compact summary. Exact case-level values appear in \texttt{data/dsmc\_execution\_metadata\_51\_cases.csv}, together with the source accounting document and Secure Hash Algorithm 256-bit (SHA-256) checksums.
+
+Across the supplied records, the simulations contain approximately $1.46$--$2.00$ million particles, use either 14 or 26 CPU cores, report runtimes from 8.04 to 21.43~h, and maintain $\Delta t/\tau_{\rm coll}=0.16$--$0.19$. The complete physical-condition manifest contains six additional height-sweep cases at $h_p/h_s=2.0$. Their physical keys and data files are included in the 57-condition manifest, but corresponding execution-accounting entries were not present in the supplied run sheet; they are therefore excluded from the runtime ranges in Table~\ref{tab:dsmc_execution} rather than assigned inferred values.
+
+\begin{table}[h]
+\centering
+\caption{Summary of the supplied DSMC execution records. Particle populations and reported runtimes are shown as minimum--median--maximum. The full case-level record is distributed with the reproducibility package.}
+\label{tab:dsmc_execution}
+\scriptsize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lccccc}
+\toprule
+Sampling block & Records & Particles ($10^6$) & CPU cores & Reported runtime (h) & $\Delta t/\tau_{\rm coll}$ \\
+\midrule
+Mach--rarefaction--orientation & 27 & 1.466--1.480--1.491 & 14, 26 & 8.05--8.70--18.15 & 0.16--0.19 \\
+Height sweep (recorded subset) & 12 & 1.489--1.973--2.005 & 14, 26 & 8.63--11.07--21.43 & 0.17--0.19 \\
+Wall-temperature sweep & 12 & 1.464--1.483--1.499 & 26 & 8.04--8.74--9.10 & 0.17--0.19 \\
+\midrule
+All supplied records & 51 & 1.464--1.486--2.005 & 14, 26 & 8.04--8.87--21.43 & 0.16--0.19 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{ACKNOWLEDGMENTS}
+No external funding was received for this work.
+
+\section*{AUTHOR DECLARATIONS}
+\subsection*{Conflict of Interest}
+The authors have no conflicts to disclose.
+
+\subsection*{Author Contributions}
+Elyas Lekzian: Conceptualization, DSMC data curation, geometry verification, rarefied-flow methodology and interpretation, validation, writing - review and editing. Ehsan Roohi: Conceptualization, machine-learning methodology, software, analysis, visualization, writing - original draft, writing - review and editing, supervision, corresponding author.
+
+\section*{DATA AVAILABILITY}
+The raw legacy DSMC fields that support the 57-condition surrogate study are available from the corresponding author upon reasonable request. The revision package contains machine-readable manifests for the 69 raw files and 57 deduplicated physical conditions, the duplicate mapping and 27-case secondary spatial-support block, the available 51-case execution metadata, processed validation tables, and SHA-256 checksums. The new SPARTA moment and half-range packages include block-resolved field moments, wall impulses, collision-tally metadata, packed numerical arrays, validation reports, exact run inputs, and analysis scripts for the six endpoint and six intermediate-$\Kn$ cases. The repository also contains the equal-capacity moment gate, constructive nonuniqueness calculation, half-range reconstruction, uncertainty analysis, and source code for every revised figure.
+
+\section*{DECLARATION OF GENERATIVE ARTIFICIAL INTELLIGENCE USE}
+The authors used ChatGPT with Generative Pre-trained Transformer 5.6 (GPT-5.6), developed by OpenAI, to improve language and readability and to assist with code review and figure formatting. The tool did not generate or alter any original DSMC data. The authors reviewed the resulting text, code and figures; they verified all scientific claims and numerical results and accept full responsibility for the content of the manuscript.
+
+\begin{thebibliography}{99}
+\bibitem{Schneider2008} Schneider, S. P., ``Summary of hypersonic boundary-layer transition experiments on blunt bodies with roughness", Journal of Spacecraft and Rockets, \textbf{45}, 1090--1105 (2008). \href{https://doi.org/10.2514/1.37431}{doi:10.2514/1.37431}.
+\bibitem{BerryHorvath2008} Berry, S. A., Horvath, T. J., ``Discrete-roughness transition for hypersonic flight vehicles", Journal of Spacecraft and Rockets, \textbf{45}, 216--227 (2008). \href{https://doi.org/10.2514/1.30970}{doi:10.2514/1.30970}.
+\bibitem{Grotowsky2000} Grotowsky, I. M. G., Ballmann, J., ``Numerical investigation of hypersonic step-flows", Shock Waves, \textbf{10}, 57--72 (2000). \href{https://doi.org/10.1007/s001930050179}{doi:10.1007/s001930050179}.
+\bibitem{Estruch2010} Estruch, D., MacManus, D. G., Stollery, J. L., Lawson, N. J., Garry, K. P., ``Hypersonic interference heating in the vicinity of surface protuberances", Experiments in Fluids, \textbf{49}, 683--699 (2010). \href{https://doi.org/10.1007/s00348-010-0844-x}{doi:10.1007/s00348-010-0844-x}.
+\bibitem{Chang2010} Chang, C.-L., Choudhari, M., Li, F., ``Numerical computations of hypersonic boundary-layer over surface irregularities" in 48th AIAA Aerospace Sciences Meeting, pp. AIAA 2010-1572 (2010). \href{https://doi.org/10.2514/6.2010-1572}{doi:10.2514/6.2010-1572}.
+\bibitem{Qamar2012} Qamar, A., Sanghi, S., ``Aerodynamics characteristic of axisymmetric surface protuberance in supersonic regime", Engineering Applications of Computational Fluid Mechanics, \textbf{6}, 316--335 (2012). \href{https://doi.org/10.1080/19942060.2012.11015424}{doi:10.1080/19942060.2012.11015424}.
+\bibitem{DeTullio2013} De Tullio, N., Paredes, P., Sandham, N. D., Theofilis, V., ``Laminar-turbulent transition induced by a discrete roughness element in a supersonic boundary layer", Journal of Fluid Mechanics, \textbf{735}, 613--646 (2013). \href{https://doi.org/10.1017/jfm.2013.520}{doi:10.1017/jfm.2013.520}.
+\bibitem{Hahn2013} Hahn, P. V., Frendi, A., ``Interaction of three-dimensional protuberances with a supersonic turbulent boundary layer", AIAA Journal, \textbf{51}, 1657--1666 (2013). \href{https://doi.org/10.2514/1.J052101}{doi:10.2514/1.J052101}.
+\bibitem{KumarReddy2013} Kumar, C. S., Reddy, K. P. J., ``Experimental investigation of heat fluxes in the vicinity of protuberances on a flat plate at hypersonic speeds", Journal of Heat Transfer, \textbf{135}, 121701 (2013). \href{https://doi.org/10.1115/1.4024667}{doi:10.1115/1.4024667}.
+\bibitem{KumarReddy2014} Kumar, C. S., Reddy, K. P. J., ``Hypersonic interference heating on cones with short three-dimensional protuberances", Experimental Thermal and Fluid Science, \textbf{55}, 29--41 (2014). \href{https://doi.org/10.1016/j.expthermflusci.2014.02.013}{doi:10.1016/j.expthermflusci.2014.02.013}.
+\bibitem{Avallone2016} Avallone, F., Schrijer, F. F. J., Cardone, G., ``Infrared thermography of transition due to isolated roughness elements in hypersonic flows", Physics of Fluids, \textbf{28}, 024106 (2016). \href{https://doi.org/10.1063/1.4941527}{doi:10.1063/1.4941527}.
+\bibitem{DuanXiao2017} Duan, Z., Xiao, Z., ``Hypersonic transition induced by three isolated roughness elements on a flat plate", Computers and Fluids, \textbf{157}, 1--13 (2017). \href{https://doi.org/10.1016/j.compfluid.2017.08.006}{doi:10.1016/j.compfluid.2017.08.006}.
+\bibitem{DiGiovanni2018} Di Giovanni, A., Stemmer, C., ``Cross-flow-type breakdown induced by distributed roughness in the boundary layer of a hypersonic capsule configuration", Journal of Fluid Mechanics, \textbf{856}, 470--503 (2018). \href{https://doi.org/10.1017/jfm.2018.706}{doi:10.1017/jfm.2018.706}.
+\bibitem{Akshay2021} Akshay, N., Nagaraja, S. R., ``Analysis of hypersonic flow over pin protrusions on a blunt body" in Recent Advances in Sustainable Technologies, pp. 293--302 (2021). \href{https://doi.org/10.1007/978-981-16-0976-3_28}{doi:10.1007/978-981-16-0976-3\_28}.
+\bibitem{BlancoCasares2022} Blanco-Casares, A., Jacobs, G. B., ``Wall roughness effects on the supersonic flow over a circular cylinder", Shock Waves, \textbf{32}, 643--663 (2022). \href{https://doi.org/10.1007/s00193-022-01098-y}{doi:10.1007/s00193-022-01098-y}.
+\bibitem{Tsutsui2022} Tsutsui, F., Takagi, Y., Takimoto, H., Kitamura, K., Nonaka, S., ``Side force characteristics of slender-bodied supersonic vehicle with two protuberances", Journal of Spacecraft and Rockets, \textbf{59}, 1697--1712 (2022). \href{https://doi.org/10.2514/1.A35319}{doi:10.2514/1.A35319}.
+\bibitem{Chandrakumar2023} Chandrakumar, V. C. M., Nagaraja, S. R., ``Study of effect of protrusions on cones in hypersonic flow" in Recent Developments in Mechanics and Design, pp. 235--242 (2023). \href{https://doi.org/10.1007/978-981-19-4140-5_20}{doi:10.1007/978-981-19-4140-5\_20}.
+\bibitem{Haley2023} Haley, C., Zhong, X., ``Roughness effect on hypersonic second mode instability and transition on a cone", Physics of Fluids, \textbf{35}, 014108 (2023). \href{https://doi.org/10.1063/5.0137902}{doi:10.1063/5.0137902}.
+\bibitem{Leopardi2024} Leopardi, M., Paciorri, R., Assonitis, A., Neri, A., Barbagallo, D., ``Effects of protuberances on surface loads on the Vega-C launch vehicle", Journal of Spacecraft and Rockets (2024). \href{https://doi.org/10.2514/1.A35908}{doi:10.2514/1.A35908}.
+\bibitem{PullinHarvey1977} Pullin, D. I., Harvey, J. K., ``Direct simulation calculations of the rarefied flow past a forward-facing step", AIAA Journal, \textbf{15}, 124--126 (1977). \href{https://doi.org/10.2514/3.7310}{doi:10.2514/3.7310}.
+\bibitem{LeiteSantos2015} Leite, P. H. M., Santos, W. F. N., ``Computational analysis of a rarefied hypersonic flow over combined gap/step geometries", Advances in Aerospace Sciences, \textbf{7}, 369--394 (2015). \href{https://doi.org/10.1051/eucass/201507369}{doi:10.1051/eucass/201507369}.
+\bibitem{NabapureMurthy2019} Nabapure, D., Murthy, R. C., ``DSMC simulation of rarefied gas flow over a wall mounted cube" in ASME Fluids Engineering Division Summer Meeting (2019). \href{https://doi.org/10.1115/AJKFluids2019-5447}{doi:10.1115/AJKFluids2019-5447}.
+\bibitem{WangFang2020} Wang, L., Fang, S., ``Effect of obstacle's length-to-height ratio on aerodynamic quantities of rarefied hypersonic flow", IOP Conference Series: Materials Science and Engineering, \textbf{887}, 012015 (2020). \href{https://doi.org/10.1088/1757-899X/887/1/012015}{doi:10.1088/1757-899X/887/1/012015}.
+\bibitem{NabapureMurthy2021} Nabapure, D., Murthy, R. C., ``DSMC investigation of rarefied gas flow over a 2D forward-facing step: Effect of Knudsen number", Acta Astronautica, \textbf{178}, 89--109 (2021). \href{https://doi.org/10.1016/j.actaastro.2020.08.030}{doi:10.1016/j.actaastro.2020.08.030}.
+\bibitem{ManelaGibelli2020} Manela, A., Gibelli, L., ``Free-molecular and near-free-molecular gas flows over backward facing steps", Journal of Fluid Mechanics, \textbf{889}, A22 (2020). \href{https://doi.org/10.1017/jfm.2020.73}{doi:10.1017/jfm.2020.73}.
+\bibitem{Gavasane2018} Gavasane, A., Agrawal, A., Bhandarkar, U., ``Study of rarefied gas flows in backward facing micro-step using direct simulation Monte Carlo", Vacuum, \textbf{155}, 249--259 (2018). \href{https://doi.org/10.1016/j.vacuum.2018.06.026}{doi:10.1016/j.vacuum.2018.06.026}.
+\bibitem{MahdaviRoohi2022} Mahdavi, Amirmehran, Roohi, Ehsan, ``A study on micro-step flow using a hybrid direct simulation Monte Carlo-Fokker-Planck approach", Physics of Fluids, \textbf{34}, 062007 (2022). \href{https://doi.org/10.1063/5.0090538}{doi:10.1063/5.0090538}.
+\bibitem{SabouriLekzian2025} Sabouri, Moslem, Lekzian, Elyas, ``Thermal and flow effects of corner rounding in rarefied hypersonic step flows", Applied Thermal Engineering, \textbf{274}, 126763 (2025). \href{https://doi.org/10.1016/j.applthermaleng.2025.126763}{doi:10.1016/j.applthermaleng.2025.126763}.
+\bibitem{SabouriLekzian2026} Sabouri, Moslem, Lekzian, Elyas, ``Study of Triangle-shaped Protrusions Exposed to High-speed Flow in Rarefied Regime", Flow, Turbulence and Combustion, \textbf{116}, 47 (2026). \href{https://doi.org/10.1007/s10494-026-00741-3}{doi:10.1007/s10494-026-00741-3}.
+\bibitem{Boyd2017} Boyd, Iain D., Schwartzentruber, Thomas E., \emph{Nonequilibrium Gas Dynamics and Molecular Simulation}, Cambridge University Press (2017). \href{https://doi.org/10.1017/9781139683494}{doi:10.1017/9781139683494}.
+\bibitem{Stefanov2019} Stefanov, Stefan K., ``On the basic concepts of the direct simulation Monte Carlo method", Physics of Fluids, \textbf{31}, 067104 (2019). \href{https://doi.org/10.1063/1.5099042}{doi:10.1063/1.5099042}.
+\bibitem{Plimpton2019} Plimpton, S. J., Moore, S. G., Borner, A., Stagg, A. K., Koehler, T. P., Torczynski, J. R., Gallis, M. A., ``Direct simulation Monte Carlo on petaflop supercomputers and beyond", Physics of Fluids, \textbf{31}, 086101 (2019). \href{https://doi.org/10.1063/1.5108534}{doi:10.1063/1.5108534}.
+\bibitem{Becker1974} Becker, M., Robben, F., Cattolica, R., ``Velocity distribution functions near the leading edge of a flat plate", AIAA Journal, \textbf{12}, 1247--1253 (1974). \href{https://doi.org/10.2514/3.49461}{doi:10.2514/3.49461}.
+\bibitem{Sun2011PPC} Sun, Z.-X., Tang, Z., He, Y.-L., Tao, W.-Q., ``Proper cell dimension and number of particles per cell for DSMC", Computers and Fluids, \textbf{50}, 1--9 (2011). \href{https://doi.org/10.1016/j.compfluid.2011.04.019}{doi:10.1016/j.compfluid.2011.04.019}.
+\bibitem{Shamseddine2019} Shamseddine, M., Lakkis, I., ``A novel spatio-temporally adaptive parallel three-dimensional DSMC solver for unsteady rarefied micro/nano gas flows", Computers and Fluids, \textbf{186}, 1--14 (2019). \href{https://doi.org/10.1016/j.compfluid.2019.03.007}{doi:10.1016/j.compfluid.2019.03.007}.
+\bibitem{Sabouri2024FPPC} Sabouri, Moslem, Zakeri, R., Ebrahimi, A., ``Improving computational efficiency in DSMC simulations of vacuum gas dynamics with a fixed number of particles per cell", Physica Scripta, \textbf{99}, 085213 (2024). \href{https://doi.org/10.1088/1402-4896/ad5a46}{doi:10.1088/1402-4896/ad5a46}.
+\bibitem{Raissi2019} Raissi, M., Perdikaris, P., Karniadakis, G. E., ``Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations", Journal of Computational Physics, \textbf{378}, 686--707 (2019). \href{https://doi.org/10.1016/j.jcp.2018.10.045}{doi:10.1016/j.jcp.2018.10.045}.
+\bibitem{Karniadakis2021} Karniadakis, G. E., Kevrekidis, I. G., Lu, L., Perdikaris, P., Wang, S., Yang, L., ``Physics-informed machine learning", Nature Reviews Physics, \textbf{3}, 422--440 (2021). \href{https://doi.org/10.1038/s42254-021-00314-5}{doi:10.1038/s42254-021-00314-5}.
+\bibitem{Lu2021} Lu, Lu, Jin, Pengzhan, Pang, Guofei, Zhang, Zhongqiang, Karniadakis, George Em, ``Learning nonlinear operators via DeepONet based on the universal approximation theorem of operators", Nature Machine Intelligence, \textbf{3}, 218--229 (2021). \href{https://doi.org/10.1038/s42256-021-00302-5}{doi:10.1038/s42256-021-00302-5}.
+\bibitem{Maulik2020} Maulik, Romit, Fukami, Kai, Ramachandra, Nesar, Fukagata, Koji, Taira, Kunihiko, ``Probabilistic neural networks for fluid flow surrogate modeling and data recovery", Physical Review Fluids, \textbf{5}, 104401 (2020). \href{https://doi.org/10.1103/PhysRevFluids.5.104401}{doi:10.1103/PhysRevFluids.5.104401}.
+\bibitem{Morimoto2022} Morimoto, Masaki, Fukami, Kai, Maulik, Romit, Vinuesa, Ricardo, Fukagata, Koji, ``Assessments of epistemic uncertainty using Gaussian stochastic weight averaging for fluid-flow regression", Physica D, \textbf{440}, 133454 (2022). \href{https://doi.org/10.1016/j.physd.2022.133454}{doi:10.1016/j.physd.2022.133454}.
+\bibitem{Peyvan2026} Peyvan, Ahmad, Kumar, Varun, Karniadakis, George Em, ``Fusion-DeepONet: a data-efficient neural operator for geometry-dependent hypersonic and supersonic flows", Journal of Computational Physics, \textbf{544}, 114432 (2026). \href{https://doi.org/10.1016/j.jcp.2025.114432}{doi:10.1016/j.jcp.2025.114432}.
+\bibitem{RoohiMahdavi2026} Roohi, Ehsan, Mahdavi, Amirmehran, ``Analysis of the rarefied flow at micro-step using a DeepONet surrogate model with a physics-guided zonal loss function", Microfluidics and Nanofluidics, \textbf{30}, 44 (2026). \href{https://doi.org/10.1007/s10404-026-02899-8}{doi:10.1007/s10404-026-02899-8}.
+\bibitem{Luo2023Sparse} Z. Luo, L. Wang, J. Xu, M. Chen, J. Yuan, and A. C. C. Tan, ``Flow reconstruction from sparse sensors based on reduced-order autoencoder state estimation,'' Physics of Fluids \textbf{35}, 077107 (2023). \href{https://doi.org/10.1063/5.0155039}{doi:10.1063/5.0155039}.
+\bibitem{HosseiniShiri2024} M. Y. Hosseini and Y. Shiri, ``Flow field reconstruction from sparse sensor measurements with physics-informed neural networks,'' Physics of Fluids \textbf{36}, 073606 (2024). \href{https://doi.org/10.1063/5.0211680}{doi:10.1063/5.0211680}.
+\bibitem{Fukami2021Sparse} K. Fukami, R. Maulik, N. Ramachandra, K. Fukagata, and K. Taira, ``Global field reconstruction from sparse sensors with Voronoi tessellation-assisted deep learning,'' Nature Machine Intelligence \textbf{3}, 945--951 (2021). \href{https://doi.org/10.1038/s42256-021-00402-2}{doi:10.1038/s42256-021-00402-2}.
+\bibitem{Santos2023Senseiver} J. E. Santos, Z. R. Fox, A. Mohan, D. O'Malley, H. Viswanathan, and N. Lubbers, ``Development of the Senseiver for efficient field reconstruction from sparse observations,'' Nature Machine Intelligence \textbf{5}, 1317--1325 (2023). \href{https://doi.org/10.1038/s42256-023-00746-x}{doi:10.1038/s42256-023-00746-x}.
+\bibitem{Zhao2024RecFNO} X. Zhao, X. Chen, Z. Gong, W. Zhou, W. Yao, and Y. Zhang, ``RecFNO: A resolution-invariant flow and heat field reconstruction method from sparse observations via Fourier neural operator,'' International Journal of Thermal Sciences \textbf{195}, 108619 (2024). \href{https://doi.org/10.1016/j.ijthermalsci.2023.108619}{doi:10.1016/j.ijthermalsci.2023.108619}.
+\bibitem{Williams2024SHRED} J. P. Williams, O. Zahn, and J. N. Kutz, ``Sensing with shallow recurrent decoder networks,'' Proceedings of the Royal Society A \textbf{480}, 20240054 (2024). \href{https://doi.org/10.1098/rspa.2024.0054}{doi:10.1098/rspa.2024.0054}.
+\bibitem{Kong2025CrossAttention} X. Kong, Q. Fan, J. Li, and W. He, ``Reconstructing flow field from sparse sensor data: A deep learning framework combining autoencoder and cross-attention mechanism,'' Physics of Fluids \textbf{37}, 097119 (2025). \href{https://doi.org/10.1063/5.0289122}{doi:10.1063/5.0289122}.
+\bibitem{Wang2025Generative} X. Wang, Z. Li, Y. Zhang, H. Wen, and B. Wang, ``Observation-guided generative flow field reconstruction of rotating detonation combustor,'' Physics of Fluids \textbf{37}, 116110 (2025). \href{https://doi.org/10.1063/5.0300394}{doi:10.1063/5.0300394}.
+\bibitem{Zhang2026Sparse} Y.-Q. Zhang, J.-Z. Peng, Z.-Q. Wang, W.-J. Yuan, Y.-B. Li, Z.-F. Zhou, H.-R. Xie, and W.-T. Wu, ``High-fidelity flow-field reconstruction from sparse sensors using a hybrid graph neural network-transformer architecture,'' Physics of Fluids \textbf{38}, 023610 (2026). \href{https://doi.org/10.1063/5.0307325}{doi:10.1063/5.0307325}.
+\bibitem{Manohar2018} K. Manohar, B. W. Brunton, J. N. Kutz, and S. L. Brunton, ``Data-driven sparse sensor placement for reconstruction: Demonstrating the benefits of exploiting known patterns,'' IEEE Control Systems Magazine \textbf{38}, 63--86 (2018). \href{https://doi.org/10.1109/MCS.2018.2810460}{doi:10.1109/MCS.2018.2810460}.
+\bibitem{Erichson2020} N. B. Erichson, L. Mathelin, Z. Yao, S. L. Brunton, M. W. Mahoney, and J. N. Kutz, ``Shallow neural networks for fluid flow reconstruction with limited sensors,'' Proceedings of the Royal Society A \textbf{476}, 20200097 (2020). \href{https://doi.org/10.1098/rspa.2020.0097}{doi:10.1098/rspa.2020.0097}.
+\bibitem{Liang2026Sensor} Y. Liang, C. Hou, G. Y. Cornejo Maceda, A. Ianiro, S. Discetti, A. Meil\'an-Vila, D. Sornette, S. C. Lera, J. Chen, X. He, and B. R. Noack, ``Sensor optimization for urban wind estimation with a cluster-based probabilistic framework,'' Physics of Fluids \textbf{38}, 045131 (2026). \href{https://doi.org/10.1063/5.0303585}{doi:10.1063/5.0303585}.
+\bibitem{LiHuWu2024} X. Li, B. Hu, and L. Wu, ``A non-localized spatial--temporal constitutive relation in rarefied gas dynamics,'' Physics of Fluids \textbf{36}, 102018 (2024). \href{https://doi.org/10.1063/5.0228567}{doi:10.1063/5.0228567}.
+\bibitem{Geurts2006} P. Geurts, D. Ernst, and L. Wehenkel, ``Extremely randomized trees,'' Machine Learning \textbf{63}, 3--42 (2006). \href{https://doi.org/10.1007/s10994-006-6226-1}{doi:10.1007/s10994-006-6226-1}.
+\bibitem{Efron1979} B. Efron, ``Bootstrap methods: Another look at the jackknife,'' The Annals of Statistics \textbf{7}, 1--26 (1979). \href{https://doi.org/10.1214/aos/1176344552}{doi:10.1214/aos/1176344552}.
+
+\end{thebibliography}
+
+\end{document}

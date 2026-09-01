@@ -1,0 +1,30 @@
+\documentclass[11pt]{letter}
+\usepackage[margin=1in]{geometry}
+\usepackage{mathptmx}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\signature{Ehsan Roohi\\Corresponding author\\Department of Mechanical and Industrial Engineering\\University of Massachusetts Amherst}
+\address{Department of Mechanical and Industrial Engineering\\University of Massachusetts Amherst\\Amherst, MA 01003, USA}
+\date{August 30, 2026}
+
+\begin{document}
+\begin{letter}{Editor\\\emph{Physics of Fluids}}
+\opening{Dear Editor,}
+
+Please consider our substantially revised manuscript, ``Bulk-to-Wall Observability in Rarefied Hypersonic Flow over Triangular Protrusions: Full-Range Moment Limits and Incident Half-Range Sufficiency,'' by Elyas Lekzian and Ehsan Roohi, for publication in \emph{Physics of Fluids}.
+
+The earlier version centered on a model-conditional spatial-support diagnostic, $R_{95}$, extracted from DSMC macroscopic fields. The review correctly identified that this evidence was useful but not sufficient for a general physical claim about wall-load observability, particularly for shear. We have therefore retained the full validation and reproducibility structure while rebuilding the scientific center of the manuscript around new DSMC data and a kinetic sufficiency test.
+
+The revised paper now makes three main contributions. First, an equal-capacity blind interpolation experiment compares primitive variables, the complete momentum-flux tensor, and heat-flux augmentation. The stress tensor improves pressure relative to primitive fields, but finite full-range states do not improve transferable signed shear. Second, a constructive positive-distribution example proves that full-range moments through degree three can be identical while incident half-range pressure differs and half-range shear changes sign. Third, SPARTA collision tallies show that the incoming half-range state, combined with the known diffuse-wall kernel, reconstructs co-temporal DSMC pressure to 0.15--0.28\% NRMSE and signed shear to 1.30--7.35\% across six geometry--rarefaction cases. Independent 40,000-step windows retain 1.68--2.85\% pressure error and identify the forward-facing shear cases as sampling-noise limited rather than concealing them behind absolute shear.
+
+We believe the importance of this result is broader than one surrogate architecture. A kinetic--continuum interface or learned wall closure can fail even when it receives accurate low-order macroscopic fields, because full-range moments combine molecules approaching and leaving the wall. The incident half-range result provides a physically interpretable upper-bound state against which practical directional-moment or reduced-distribution closures can be designed. The neural surrogate remains in the paper as a validated emulator and controlled comparison tool; it no longer carries the central kinetic claim. Likewise, $R_{95}$ is retained only as a secondary model-conditional diagnostic.
+
+The manuscript is a strong fit for \emph{Physics of Fluids}: it combines rarefied-gas dynamics, DSMC, gas--surface interaction, uncertainty-aware surface loading, and data-driven closure assessment. All figures have been rebuilt in publication-quality landscape form. The reproducibility package contains case manifests, SPARTA inputs, block-resolved moment and collision outputs, exact commands, packed arrays, numerical quality-control reports, source scripts, vector figures, and checksums.
+
+This manuscript is original, is not under consideration elsewhere, and has been approved by both authors. The authors declare no conflict of interest and no external funding for this work.
+
+Thank you for your consideration.
+
+\closing{Sincerely,}
+\end{letter}
+\end{document}

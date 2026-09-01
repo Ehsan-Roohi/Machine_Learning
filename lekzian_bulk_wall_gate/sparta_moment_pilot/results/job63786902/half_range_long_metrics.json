@@ -1,0 +1,86 @@
+[
+  {
+    "case_id": "ISO_Ma6_Kn0p1",
+    "kn": 0.1,
+    "metrics": {
+      "cp": {
+        "incident_nrmse": 0.0028228572545747903,
+        "incident_correlation": 0.9999928179871199,
+        "full_control_nrmse": 0.0005719179860348042,
+        "windward_incident_nrmse": 0.0027611119062526256,
+        "leeward_incident_nrmse": 0.015308664334115141,
+        "target_rms_sem_percent": 1.8202561150815606
+      },
+      "cf": {
+        "incident_nrmse": 0.07353100339961766,
+        "incident_correlation": 0.9974817163260967,
+        "full_control_nrmse": 0.006485869331711717,
+        "windward_incident_nrmse": 0.0723479074966953,
+        "leeward_incident_nrmse": 0.3256066080272112,
+        "target_rms_sem_percent": 11.628379645832812
+      },
+      "cq": {
+        "incident_nrmse": 0.006724230525480352,
+        "incident_correlation": 0.9999644514452144,
+        "full_control_nrmse": 0.0005332441525010134,
+        "windward_incident_nrmse": 0.006637459248933079,
+        "leeward_incident_nrmse": 0.04517464741732891,
+        "target_rms_sem_percent": 2.6334031571370784
+      }
+    },
+    "ignored_snapshots": [
+      [
+        1,
+        0
+      ],
+      [
+        5001,
+        43
+      ]
+    ],
+    "used_records": 188120,
+    "minimum_element_records": 109
+  },
+  {
+    "case_id": "ISO_Ma6_Kn0p8",
+    "kn": 0.8,
+    "metrics": {
+      "cp": {
+        "incident_nrmse": 0.0016208303656692952,
+        "incident_correlation": 0.999997688858882,
+        "full_control_nrmse": 0.0005557209427977152,
+        "windward_incident_nrmse": 0.001596565690460606,
+        "leeward_incident_nrmse": 0.013834881237752058,
+        "target_rms_sem_percent": 1.1709682494568576
+      },
+      "cf": {
+        "incident_nrmse": 0.02081830605508876,
+        "incident_correlation": 0.9997736018928226,
+        "full_control_nrmse": 0.0037549905775076014,
+        "windward_incident_nrmse": 0.020514660252012394,
+        "leeward_incident_nrmse": 0.350855458446937,
+        "target_rms_sem_percent": 3.4683603911878964
+      },
+      "cq": {
+        "incident_nrmse": 0.0013752123701220819,
+        "incident_correlation": 0.9999984435629751,
+        "full_control_nrmse": 0.0005334488267405772,
+        "windward_incident_nrmse": 0.0013485080984279188,
+        "leeward_incident_nrmse": 0.05803129675621962,
+        "target_rms_sem_percent": 1.462254640062937
+      }
+    },
+    "ignored_snapshots": [
+      [
+        1,
+        0
+      ],
+      [
+        5001,
+        79
+      ]
+    ],
+    "used_records": 334469,
+    "minimum_element_records": 220
+  }
+]

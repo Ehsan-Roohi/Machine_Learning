@@ -1,0 +1,82 @@
+{
+  "verdict": "FAIL",
+  "protocol": {
+    "train_Kn": [
+      0.1,
+      0.8
+    ],
+    "blind_test_Kn": [
+      0.2,
+      0.4
+    ],
+    "geometries": [
+      "BWD",
+      "FWD",
+      "ISO"
+    ],
+    "seeds": [
+      11,
+      29,
+      47,
+      71,
+      101
+    ],
+    "equal_capacity_padding": true,
+    "gas_normal": "left normal of the stored clockwise SPARTA surface element; independent of the positive-x shear tangent"
+  },
+  "aggregate": {
+    "cp": {
+      "P": {
+        "nrmse_mean": 0.03195575411302977,
+        "nrmse_std": 0.0038405669694949575
+      },
+      "S0": {
+        "nrmse_mean": 0.0887040159204273,
+        "nrmse_std": 0.002745109106402724
+      },
+      "S1": {
+        "nrmse_mean": 0.061075228095877135,
+        "nrmse_std": 0.0008967721751381622
+      },
+      "S2": {
+        "nrmse_mean": 0.05840388485824481,
+        "nrmse_std": 0.0008271659442539441
+      },
+      "S1_gain_vs_S0_percent": 31.14716683102015,
+      "S1_gain_ci95_percent": [
+        3.827644517404532,
+        43.68159047008407
+      ]
+    },
+    "cf": {
+      "P": {
+        "nrmse_mean": 0.26372719822997165,
+        "nrmse_std": 0.01895112610603469
+      },
+      "S0": {
+        "nrmse_mean": 0.35663756992664897,
+        "nrmse_std": 0.004622284726428104
+      },
+      "S1": {
+        "nrmse_mean": 0.43381955879771084,
+        "nrmse_std": 0.0034885309470332414
+      },
+      "S2": {
+        "nrmse_mean": 0.4575856613924699,
+        "nrmse_std": 0.0019144312744032188
+      },
+      "S1_gain_vs_S0_percent": -21.641575475891727,
+      "S1_gain_ci95_percent": [
+        -38.0924884435416,
+        -5.095973670409625
+      ]
+    }
+  },
+  "checks": {
+    "S1_cp_nrmse_below_5_percent": false,
+    "S1_cf_nrmse_below_15_percent": false,
+    "S1_gain_at_least_20_percent_for_cf": false,
+    "cf_gain_ci_excludes_zero": false,
+    "S1_beats_parameter_baseline": false
+  }
+}

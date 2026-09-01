@@ -1,0 +1,375 @@
+#!/usr/bin/env python3
+"""Generate the six-case SPARTA moment-sufficiency pilot.
+
+The generated cases reproduce the published Phase-1 parameter slice with a
+stock-SPARTA-compatible uniform grid.  They intentionally do not claim to be
+bitwise continuations of the original private FPPC simulations.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import shutil
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+
+K_B = 1.380649e-23
+M_AR = 6.63e-26
+T_INF = 300.0
+GAMMA_AR = 5.0 / 3.0
+H_P = 0.03
+X_LO, X_HI = -0.1, 1.0
+Y_LO, Y_HI = 0.0, 0.5
+
+APEX_X = {"ISO": 0.23, "FWD": 0.21, "BWD": 0.25}
+CASE_MATRIX = [(geometry, kn) for geometry in ("ISO", "FWD", "BWD") for kn in (0.1, 0.8)]
+
+
+@dataclass(frozen=True)
+class RunSettings:
+    mode: str
+    nx: int
+    ny: int
+    ppc: float
+    equil_steps: int
+    sample_every: int
+    sample_repeat: int
+    block_steps: int
+    nblocks: int
+    collision_steps: int
+    collision_dump_every: int
+
+
+SETTINGS = {
+    "production": RunSettings(
+        mode="production",
+        nx=440,
+        ny=200,
+        ppc=20.0,
+        # Deliberately not a multiple of block_steps: avoids a zero-length
+        # dump at the instant the sampling computes/fixes are defined.
+        equil_steps=30_001,
+        sample_every=20,
+        sample_repeat=500,
+        block_steps=10_000,
+        nblocks=4,
+        collision_steps=200,
+        collision_dump_every=20,
+    ),
+    "smoke": RunSettings(
+        mode="smoke",
+        nx=44,
+        ny=20,
+        ppc=2.0,
+        equil_steps=21,
+        sample_every=1,
+        sample_repeat=5,
+        block_steps=5,
+        nblocks=4,
+        collision_steps=5,
+        collision_dump_every=1,
+    ),
+}
+
+
+AR_SPECIES = """# Species data for the SPARTA moment pilot
+
+# ID Molwt(amu) Molmass(kg) RotDOF RotRel VibDOF VibRel VibTemp(K) weight charge
+Ar  40.00  6.63E-26  0  .0  0  .0  0.0  1.0  0.0
+"""
+
+AR_VSS = """# VSS collision parameters: ID diameter(m) omega Tref(K) alpha
+Ar  4.11e-10  0.81  273.15  1.4
+"""
+
+
+def fmt(value: float) -> str:
+    return f"{value:.12g}"
+
+
+def case_id(geometry: str, kn: float) -> str:
+    return f"{geometry}_Ma6_Kn{str(kn).replace('.', 'p')}"
+
+
+def freestream(ma: float, kn: float, settings: RunSettings) -> dict[str, float]:
+    sound_speed = math.sqrt(GAMMA_AR * K_B * T_INF / M_AR)
+    stream_speed = ma * sound_speed
+    mean_free_path = kn * H_P
+
+    # This density law is recovered from the archived Phase-1 DSMC fields.
+    number_density = 4.38942e19 / kn
+    dx = (X_HI - X_LO) / settings.nx
+    dy = (Y_HI - Y_LO) / settings.ny
+    fnum = number_density * dx * dy / settings.ppc
+
+    mean_thermal_speed = math.sqrt(8.0 * K_B * T_INF / (math.pi * M_AR))
+    dt_collision = 0.04 * mean_free_path / mean_thermal_speed
+    dt_advection = 0.5 * min(dx, dy) / (stream_speed + 3.0 * mean_thermal_speed)
+    timestep = min(dt_collision, dt_advection)
+    return {
+        "mach": ma,
+        "knudsen": kn,
+        "temperature_K": T_INF,
+        "stream_speed_m_per_s": stream_speed,
+        "number_density_m_minus_3": number_density,
+        "mean_free_path_m": mean_free_path,
+        "mean_thermal_speed_m_per_s": mean_thermal_speed,
+        "dx_m": dx,
+        "dy_m": dy,
+        "fnum_particles_per_simulator": fnum,
+        "timestep_s": timestep,
+        "dt_collision_limit_s": dt_collision,
+        "dt_advection_limit_s": dt_advection,
+        "target_particles": number_density * (X_HI - X_LO) * (Y_HI - Y_LO) / fnum,
+    }
+
+
+def wall_points_and_lines(geometry: str) -> tuple[list[tuple[float, float]], list[tuple[int, int, int]]]:
+    """Return the original 1043-point/1040-element wall discretization.
+
+    Element IDs 1:980 are the flat plate (type 1); 981:1040 are the
+    protrusion (type 2).  Segment direction gives outward normals from the
+    solid without using read_surf's invert option.
+    """
+    if geometry not in APEX_X:
+        raise ValueError(f"unknown geometry: {geometry}")
+
+    upstream = [(i * 0.001, 0.0) for i in range(221)]
+    downstream = [(0.24 + i * 0.001, 0.0) for i in range(761)]
+    apex_x = APEX_X[geometry]
+    protrusion: list[tuple[float, float]] = []
+    for i in range(31):
+        a = i / 30.0
+        protrusion.append((0.22 + a * (apex_x - 0.22), a * H_P))
+    for i in range(1, 31):
+        a = i / 30.0
+        protrusion.append((apex_x + a * (0.24 - apex_x), H_P * (1.0 - a)))
+
+    points = upstream + downstream + protrusion
+    lines: list[tuple[int, int, int]] = []
+    line_id = 1
+    for start, count, surf_type in ((1, 220, 1), (222, 760, 1), (983, 60, 2)):
+        for offset in range(count):
+            lines.append((line_id, surf_type, start + offset, start + offset + 1))
+            line_id += 1
+    assert len(points) == 1043
+    assert len(lines) == 1040
+    return points, lines
+
+
+def write_surface(path: Path, geometry: str) -> None:
+    points, lines = wall_points_and_lines(geometry)
+    rows = [
+        f"Lekzian {geometry} protrusion wall; generated by generate_cases.py",
+        "",
+        f"{len(points)} points",
+        f"{len(lines)} lines",
+        "",
+        "Points",
+        "",
+    ]
+    rows.extend(f"{i} {fmt(x)} {fmt(y)}" for i, (x, y) in enumerate(points, 1))
+    rows.extend(("", "Lines", ""))
+    rows.extend(f"{line_id} {surf_type} {p1} {p2}" for line_id, surf_type, p1, p2 in lines)
+    path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def render_input(
+    geometry: str,
+    kn: float,
+    settings: RunSettings,
+    physics: dict[str, float],
+    collision_tally: bool,
+) -> str:
+    total_sample_steps = settings.block_steps * settings.nblocks
+    collision_section = ""
+    if collision_tally:
+        collision_section = f"""
+# Short diagnostic only: incident/reflected velocities on protrusion elements.
+compute cCollision surf/collision/tally protrusion gas id/surf id type time xc yc zc &
+  vx/pre vy/pre vz/pre vx/post vy/post vz/post
+dump dCollision tally all {settings.collision_dump_every} output/collisions.*.dat c_cCollision[*]
+dump_modify dCollision pad 8
+run {settings.collision_steps}
+undump dCollision
+uncompute cCollision
+"""
+
+    return f"""# Stock-SPARTA reproduction of Lekzian Phase-1 case
+# Geometry={geometry}, Ma=6, Kn={kn}, hp/hs=1.5, Tw/Tinf=1
+# Generated mode={settings.mode}; do not edit derived constants by hand.
+
+seed 73821
+dimension 2
+global gridcut 0.0
+boundary o o p
+
+create_box {X_LO} {X_HI} {Y_LO} {Y_HI} -0.5 0.5
+create_grid {settings.nx} {settings.ny} 1
+balance_grid rcb cell
+
+species ar.species Ar
+mixture gas Ar nrho {fmt(physics['number_density_m_minus_3'])} &
+  vstream {fmt(physics['stream_speed_m_per_s'])} 0.0 0.0 temp {T_INF}
+global nrho {fmt(physics['number_density_m_minus_3'])} &
+  fnum {fmt(physics['fnum_particles_per_simulator'])}
+
+read_surf wall.surf type
+group protrusion surf type 2
+surf_collide diffuseWall diffuse {T_INF} 1.0
+surf_modify all collide diffuseWall
+
+collide vss gas ar.vss
+
+# Freestream enters at xlo and yhi.  The exposed ylo segment is x=-0.1:0.
+region bottomIn block {X_LO} 0.0 INF INF INF INF
+fix inflowMain emit/face gas xlo yhi
+fix inflowBottom emit/face gas ylo region bottomIn
+create_particles gas n 0
+
+timestep {fmt(physics['timestep_s'])}
+stats {max(1, min(1000, settings.equil_steps))}
+stats_style step cpu np nattempt ncoll nscoll nscheck
+
+# Reach the statistical steady state, then preserve a particle restart.
+run {settings.equil_steps}
+write_restart output/equilibrated.restart
+
+# Primitive fields: n, number density, mass density, u, v, w, T.
+compute cPrimitive grid all gas n nrho massrho u v w temp
+# Full momentum-flux tensor and translational energy-flux vector.
+compute cPFlux pflux/grid all gas momxx momyy momzz momxy momyz momxz
+compute cEFlux eflux/grid all gas heatx heaty heatz
+# Wall targets.  For monatomic Ar, erot=evib=0 and etot=ke, retained for schema.
+compute cWall surf all gas n press shx shy shz ke erot evib etot
+
+# Four non-overlapping block averages (not four independent trajectories).
+fix fPrimitive ave/grid all {settings.sample_every} {settings.sample_repeat} {settings.block_steps} c_cPrimitive[*]
+fix fPFlux ave/grid all {settings.sample_every} {settings.sample_repeat} {settings.block_steps} c_cPFlux[*]
+fix fEFlux ave/grid all {settings.sample_every} {settings.sample_repeat} {settings.block_steps} c_cEFlux[*]
+fix fWall ave/surf all {settings.sample_every} {settings.sample_repeat} {settings.block_steps} c_cWall[*]
+
+dump dGrid grid all {settings.block_steps} output/grid.*.dat id split xlo ylo xhi yhi xc yc vol &
+  f_fPrimitive[*] f_fPFlux[*] f_fEFlux[*]
+dump dWall surf all {settings.block_steps} output/wall.*.dat id v1x v1y v2x v2y area f_fWall[*]
+dump_modify dGrid pad 8
+dump_modify dWall pad 8
+
+run {total_sample_steps}
+
+undump dGrid
+undump dWall
+unfix fPrimitive
+unfix fPFlux
+unfix fEFlux
+unfix fWall
+{collision_section}
+write_restart output/final.restart
+print "MOMENT_PILOT_COMPLETE geometry={geometry} Ma=6 Kn={kn}"
+"""
+
+
+def generate(
+    root: Path,
+    mode: str,
+    only: str | None = None,
+    force: bool = False,
+    kn_values: tuple[float, ...] | None = None,
+) -> list[Path]:
+    settings = SETTINGS[mode]
+    root.mkdir(parents=True, exist_ok=True)
+    generated: list[Path] = []
+    matrix = (
+        [(geometry, kn) for geometry in ("ISO", "FWD", "BWD") for kn in kn_values]
+        if kn_values is not None
+        else CASE_MATRIX
+    )
+    if only:
+        matrix = [item for item in matrix if case_id(*item) == only]
+        if not matrix:
+            raise SystemExit(f"--only {only!r} is not in the requested case matrix")
+    elif mode == "smoke" and kn_values is None:
+        matrix = [("ISO", 0.1)]
+
+    manifest = []
+    for geometry, kn in matrix:
+        cid = case_id(geometry, kn)
+        case_dir = root / cid
+        if case_dir.exists():
+            if not force:
+                raise SystemExit(
+                    f"refusing to overwrite existing case {case_dir}; "
+                    "use --force only when its outputs can be discarded"
+                )
+            shutil.rmtree(case_dir)
+        (case_dir / "output").mkdir(parents=True)
+        (case_dir / "ar.species").write_text(AR_SPECIES, encoding="utf-8")
+        (case_dir / "ar.vss").write_text(AR_VSS, encoding="utf-8")
+        write_surface(case_dir / "wall.surf", geometry)
+        physics = freestream(6.0, kn, settings)
+        tally = geometry == "ISO"
+        (case_dir / "in.moment_pilot").write_text(
+            render_input(geometry, kn, settings, physics, tally), encoding="utf-8"
+        )
+        metadata = {
+            "case_id": cid,
+            "geometry": geometry,
+            "apex_x_m": APEX_X[geometry],
+            "hp_m": H_P,
+            "hs_m": 0.02,
+            "hp_over_hs": 1.5,
+            "wall_temperature_K": T_INF,
+            "collision_tally": tally,
+            "settings": asdict(settings),
+            "physics": physics,
+            "column_schema": {
+                "grid": [
+                    "id", "split", "xlo", "ylo", "xhi", "yhi", "xc", "yc", "vol",
+                    "n", "nrho", "massrho", "u", "v", "w", "temp",
+                    "momxx", "momyy", "momzz", "momxy", "momyz", "momxz",
+                    "heatx", "heaty", "heatz",
+                ],
+                "wall": [
+                    "id", "v1x", "v1y", "v2x", "v2y", "length",
+                    "ncoll", "press", "shx", "shy", "shz", "ke", "erot", "evib", "etot",
+                ],
+                "collision": [
+                    "surface_id", "particle_id", "species_type", "time_within_step",
+                    "xc", "yc", "zc", "vx_pre", "vy_pre", "vz_pre",
+                    "vx_post", "vy_post", "vz_post",
+                ],
+            },
+        }
+        (case_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+        manifest.append(metadata)
+        generated.append(case_dir)
+
+    (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return generated
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--mode", choices=sorted(SETTINGS), default="production")
+    parser.add_argument("--only", help="Generate one exact case ID from the six-case matrix")
+    parser.add_argument(
+        "--kn-values", type=float, nargs="+",
+        help="Override the default Kn={0.1,0.8} matrix for all three geometries",
+    )
+    parser.add_argument("--force", action="store_true", help="Discard and regenerate existing case directories")
+    args = parser.parse_args()
+    kn_values = tuple(args.kn_values) if args.kn_values else None
+    if kn_values is not None and any(kn <= 0.0 for kn in kn_values):
+        raise SystemExit("all --kn-values must be positive")
+    cases = generate(args.output.resolve(), args.mode, args.only, args.force, kn_values)
+    print(f"generated {len(cases)} case(s) in {args.output.resolve()}")
+    for case in cases:
+        print(case.name)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,44 @@
+\documentclass[10pt]{article}
+\usepackage[margin=0.65in]{geometry}
+\usepackage{mathptmx}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.42em}
+
+\begin{document}
+\begin{flushright}
+Department of Mechanical and Industrial Engineering\\
+University of Massachusetts Amherst\\
+Amherst, MA 01003, USA\\[0.55em]
+August 31, 2026
+\end{flushright}
+
+Editor\\
+\emph{Physics of Fluids}\\[0.55em]
+
+Dear Editor,
+
+Please consider our substantially revised manuscript, ``Bulk-to-Wall Observability in Rarefied Hypersonic Flow over Triangular Protrusions: Full-Range Moment Limits and Incident Half-Range Sufficiency,'' by Elyas Lekzian and Ehsan Roohi, for publication in \emph{Physics of Fluids}.
+
+The earlier version centered on a model-conditional spatial-support diagnostic, $R_{95}$, extracted from direct simulation Monte Carlo (DSMC) macroscopic fields. The review correctly identified that this evidence was useful but insufficient for a general physical claim about wall-load observability, particularly for shear. We have therefore retained the full validation and reproducibility structure while rebuilding the scientific center of the manuscript around new DSMC data and a kinetic sufficiency test.
+
+The revised paper makes three main contributions. First, an equal-capacity blind interpolation experiment compares primitive variables with the complete momentum-flux tensor and a heat-flux augmentation. The stress tensor improves pressure relative to primitive fields, but finite full-range states do not improve transferable signed shear. Second, a constructive positive-distribution example proves that full-range moments through degree three can be identical even though incident half-range pressure differs and half-range shear changes sign. Third, collision tallies from the Stochastic PArallel Rarefied-gas Time-accurate Analyzer (SPARTA) show that the incoming half-range state, combined with the known diffuse-wall kernel, reconstructs co-temporal DSMC pressure with 0.15--0.28\% normalized root-mean-square error (NRMSE) and signed shear with 1.30--7.35\% NRMSE across six geometry--rarefaction cases. Tests against independent 40,000-step windows retain 1.68--2.85\% pressure error. They also identify the forward-facing shear cases as sampling-noise limited, so those cases are reported explicitly rather than concealed behind absolute shear.
+
+The significance of this result extends beyond one surrogate architecture. A kinetic--continuum interface or learned wall closure can fail even when it receives accurate low-order macroscopic fields because full-range moments combine molecules approaching and leaving the wall. The incident half-range result provides a physically interpretable upper-bound state for designing practical directional-moment or reduced-distribution closures. The neural surrogate remains in the paper as a validated emulator and controlled comparison tool; it no longer carries the central kinetic claim. Likewise, $R_{95}$ is retained only as a secondary model-conditional diagnostic.
+
+The manuscript is a strong fit for \emph{Physics of Fluids} because it connects rarefied-gas dynamics and gas--surface interaction with uncertainty-aware surface loading and data-driven closure assessment. All figures have been rebuilt in publication-quality landscape form. The reproducibility package records the cases and SPARTA inputs together with block-resolved moment and collision outputs; it also supplies the exact commands, packed arrays, numerical quality-control reports, source scripts, and checksums. Publication graphics are included in both Portable Document Format (PDF) and Scalable Vector Graphics (SVG) formats.
+
+This manuscript is original, is not under consideration elsewhere, and has been approved by both authors. The authors declare no conflict of interest and no external funding for this work.
+
+Thank you for your consideration.
+
+\begin{flushright}
+Sincerely,\\[0.55em]
+Ehsan Roohi\\
+Corresponding author\\
+Department of Mechanical and Industrial Engineering\\
+University of Massachusetts Amherst
+\end{flushright}
+\end{document}
